@@ -784,7 +784,7 @@ bot.onText(/\/help/, (msg) => {
     );
 });
 
-// /twitter command with verification
+// CLEAN Twitter Bio Verification Command - REPLACE OLD VERSION
 bot.onText(/\/twitter/, async (msg) => {
     const chatId = msg.chat.id;
     
@@ -820,20 +820,201 @@ bot.onText(/\/twitter/, async (msg) => {
                     );
                     
                     bot.sendMessage(chatId, '🔄 Twitter account reset. Let\'s verify your new account!');
-                    setTimeout(() => startTwitterVerification(chatId), 1000);
+                    setTimeout(() => startCleanBioVerification(chatId), 1000);
                 }
             });
             
             return;
         }
         
-        startTwitterVerification(chatId);
+        startCleanBioVerification(chatId);
         
     } catch (error) {
         console.error('❌ Error in twitter command:', error);
         bot.sendMessage(chatId, 'Sorry, there was an error. Please try again.');
     }
 });
+
+// CLEAN Bio Verification Function - NO TWEETS
+async function startCleanBioVerification(chatId) {
+    bot.sendMessage(chatId, 
+        `🐦 Twitter Account Verification\n\n` +
+        `To prevent fraud, we need to verify you own this Twitter account.\n\n` +
+        `📝 Step 1: Enter your Twitter username (without @):\n\n` +
+        `Example: john_doe`
+    );
+    
+    // Wait for Twitter handle
+    bot.once('message', async (response) => {
+        if (response.chat.id === chatId && !response.text.startsWith('/')) {
+            try {
+                const twitterHandle = response.text.trim().replace('@', '').toLowerCase();
+                
+                // Validate Twitter handle format
+                if (!isValidTwitterHandle(twitterHandle)) {
+                    bot.sendMessage(chatId, 
+                        `❌ Invalid Twitter handle format.\n\n` +
+                        `Please use only letters, numbers, and underscores.\n` +
+                        `Try again with /twitter`
+                    );
+                    return;
+                }
+                
+                // Check if handle is already verified by another user
+                const existingUser = await User.findOne({ 
+                    twitterHandle: twitterHandle,
+                    twitterVerified: true,
+                    telegramId: { $ne: chatId.toString() }
+                });
+                
+                if (existingUser) {
+                    bot.sendMessage(chatId, 
+                        `❌ This Twitter handle is already verified by another user.\n\n` +
+                        `If this is your account, please contact support.\n` +
+                        `Otherwise, try a different handle with /twitter`
+                    );
+                    return;
+                }
+                
+                // Generate verification code
+                const verificationCode = generateVerificationCode();
+                
+                // Update user with unverified handle and code
+                await User.findOneAndUpdate(
+                    { telegramId: chatId.toString() },
+                    { 
+                        twitterHandle: twitterHandle,
+                        twitterVerified: false,
+                        verificationCode: verificationCode,
+                        verificationExpires: new Date(Date.now() + 30 * 60 * 1000) // 30 minutes
+                    }
+                );
+                
+                // Send BIO verification instructions (DEFINITELY NOT TWEET)
+                bot.sendMessage(chatId, 
+                    `🔐 Twitter Bio Verification\n\n` +
+                    `👤 Handle: @${twitterHandle}\n` +
+                    `🔑 Code: ${verificationCode}\n\n` +
+                    `📝 Step 2: Add this code to your Twitter bio:\n\n` +
+                    `"${verificationCode}"\n\n` +
+                    `💡 You can add it anywhere in your bio. Examples:\n` +
+                    `• "Developer | Designer ${verificationCode}"\n` +
+                    `• "${verificationCode} Love coding and design"\n` +
+                    `• "Building cool stuff ${verificationCode} DM open"\n\n` +
+                    `⏰ You have 30 minutes to update your bio.\n\n` +
+                    `After updating your bio, reply "verify" to check.`
+                );
+                
+                console.log(`🔐 Bio verification code generated for @${twitterHandle}: ${verificationCode}`);
+                
+                // Wait for verification command
+                waitForCleanBioVerification(chatId, twitterHandle, verificationCode);
+                
+            } catch (error) {
+                console.error('❌ Error starting verification:', error);
+                bot.sendMessage(chatId, 'Sorry, there was an error starting verification. Please try again.');
+            }
+        }
+    });
+}
+
+async function waitForCleanBioVerification(chatId, twitterHandle, verificationCode) {
+    // Set up verification listener
+    const verificationListener = async (msg) => {
+        if (msg.chat.id === chatId) {
+            if (msg.text && msg.text.toLowerCase().includes('verify')) {
+                try {
+                    await checkCleanBioVerification(chatId, twitterHandle, verificationCode);
+                } catch (error) {
+                    console.error('❌ Verification error:', error);
+                    bot.sendMessage(chatId, 'Error during verification. Please try again.');
+                }
+                
+                // Remove this listener
+                bot.removeListener('message', verificationListener);
+            } else if (msg.text && msg.text.startsWith('/')) {
+                // User used another command, cancel verification
+                bot.removeListener('message', verificationListener);
+            }
+        }
+    };
+    
+    bot.on('message', verificationListener);
+    
+    // Auto-cancel after 30 minutes
+    setTimeout(() => {
+        bot.removeListener('message', verificationListener);
+    }, 30 * 60 * 1000);
+}
+
+async function checkCleanBioVerification(chatId, twitterHandle, verificationCode) {
+    bot.sendMessage(chatId, '🔍 Checking your Twitter bio for the verification code...');
+    
+    try {
+        // Check if verification is still valid
+        const user = await User.findOne({ 
+            telegramId: chatId.toString(),
+            verificationCode: verificationCode
+        });
+        
+        if (!user || new Date() > user.verificationExpires) {
+            bot.sendMessage(chatId, 
+                `⏰ Verification Expired\n\n` +
+                `Your verification session has expired.\n` +
+                `Please start over with /twitter`
+            );
+            return;
+        }
+        
+        // Simulate bio verification check
+        const isVerified = await simulateBioVerification(twitterHandle, verificationCode);
+        
+        if (isVerified) {
+            // Mark user as verified
+            await User.findOneAndUpdate(
+                { telegramId: chatId.toString() },
+                { 
+                    twitterVerified: true,
+                    verificationCode: null,
+                    verificationExpires: null,
+                    verifiedAt: new Date()
+                }
+            );
+            
+            bot.sendMessage(chatId, 
+                `🎉 Twitter Account Verified Successfully!\n\n` +
+                `✅ @${twitterHandle} is now linked to your account.\n\n` +
+                `You can now:\n` +
+                `• Participate in campaigns\n` +
+                `• Complete your profile for bonus earnings: /profile\n` +
+                `• Check available campaigns: /campaigns\n\n` +
+                `💡 You can remove "${verificationCode}" from your bio now if you want.`
+            );
+            
+            console.log(`✅ Twitter verified: @${twitterHandle} for user ${chatId}`);
+            
+        } else {
+            bot.sendMessage(chatId, 
+                `❌ Verification Failed\n\n` +
+                `We couldn't find the code "${verificationCode}" in @${twitterHandle}'s bio.\n\n` +
+                `Please make sure:\n` +
+                `• You added the exact code: ${verificationCode}\n` +
+                `• Your Twitter profile is public (not private)\n` +
+                `• You saved the bio changes\n` +
+                `• You waited a few minutes after updating\n\n` +
+                `Try again by replying "verify" or restart with /twitter`
+            );
+        }
+        
+    } catch (error) {
+        console.error('❌ Error checking verification:', error);
+        bot.sendMessage(chatId, 
+            `⚠️ Verification Error\n\n` +
+            `There was an error checking your verification.\n` +
+            `Please try again in a few minutes or contact support.`
+        );
+    }
+}
 
 async function startTwitterVerification(chatId) {
     bot.sendMessage(chatId, 

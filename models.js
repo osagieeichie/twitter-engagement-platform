@@ -13,6 +13,13 @@ const userSchema = new mongoose.Schema({
     lastName: String,
     username: String,
     twitterHandle: String,
+    twitterVerified: {
+        type: Boolean,
+        default: false
+    },
+    verificationCode: String,
+    verificationExpires: Date,
+    verifiedAt: Date,
     registeredAt: {
         type: Date,
         default: Date.now
@@ -258,12 +265,7 @@ const Cooldown = mongoose.model('Cooldown', cooldownSchema);
 const ProfilingState = mongoose.model('ProfilingState', profilingStateSchema);
 const Analytics = mongoose.model('Analytics', analyticsSchema);
 
-// Create indexes for better performance
-User.createIndexes();
-Campaign.createIndexes();
-Assignment.createIndexes();
-Cooldown.createIndexes();
-ProfilingState.createIndexes();
+// Note: Indexes will be created automatically by MongoDB when needed
 
 module.exports = {
     User,
