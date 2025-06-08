@@ -1,4 +1,4 @@
-// server.js - Our main server with Telegram Bot
+// server.js - Twitter Engagement Platform with Smart Profiling
 require('dotenv').config();
 const express = require('express');
 const TelegramBot = require('node-telegram-bot-api');
@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 3000;
 // Get bot token from environment (try multiple ways)
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
 
-// Debug: Log what we're getting (remove in production)
+// Debug: Log what we're getting
 console.log('🔍 Environment check:');
 console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('PORT:', process.env.PORT);
@@ -34,6 +34,7 @@ let users = [];
 let campaigns = [];
 let assignments = [];
 let cooldowns = {}; // Track user cooldowns
+let userProfilingStates = {}; // Track profiling progress
 
 // Assignment system configuration
 const ASSIGNMENT_CONFIG = {
@@ -50,16 +51,77 @@ const ASSIGNMENT_CONFIG = {
     }
 };
 
+// Smart profiling questions
+const PROFILING_QUESTIONS = {
+    age_range: {
+        question: "What's your age range? (This helps us match you with relevant campaigns)",
+        options: [
+            "16-20 📱",
+            "21-25 🎓", 
+            "26-30 💼",
+            "31-35 🏡",
+            "36-40 👨‍👩‍👧‍👦",
+            "41+ 🧠"
+        ]
+    },
+    daily_routine: {
+        question: "What best describes your typical weekday?",
+        options: [
+            "Classes and campus life 📚",
+            "Office work and meetings 💼", 
+            "Running my own business 🚀",
+            "Creative projects and freelancing 🎨",
+            "Job hunting and skill building 💪",
+            "Other professional work 👔"
+        ]
+    },
+    spending_priority: {
+        question: "When you have extra money, what do you typically spend it on first?",
+        options: [
+            "Latest gadgets and tech 📱",
+            "Fashion and looking good 👗",
+            "Experiences (travel, events, food) ✈️",
+            "Savings and investments 💰",
+            "Family and relationships 👨‍👩‍👧‍👦",
+            "Skills and education 📖",
+            "Basic needs come first 🏠"
+        ]
+    },
+    influence_style: {
+        question: "When you recommend something on social media, it's usually because:",
+        options: [
+            "I genuinely love it and want to share 💝",
+            "It solved a real problem for me 🔧", 
+            "It's trending and I want to join the conversation 🔥",
+            "I think it's good value for money 💡",
+            "It aligns with my values/beliefs 🎯",
+            "My friends/followers would find it useful 🤝"
+        ]
+    },
+    discovery_style: {
+        question: "How do you typically discover new products/services?",
+        options: [
+            "Through friends and people I trust 👥",
+            "Social media ads and influencers 📺",
+            "Research and reading reviews 🔍",
+            "Trying trending/popular things 📈",
+            "Recommendations from experts 🎓",
+            "What fits my budget when I need it 💳"
+        ]
+    }
+};
+
 // Serve static files (like our dashboard)
 app.use(express.static('.'));
 
 // Web routes
 app.get('/', (req, res) => {
     res.json({ 
-        message: 'Welcome to Twitter Engagement Platform!',
+        message: 'Welcome to Twitter Engagement Platform with Smart Profiling!',
         status: 'Server is running',
         totalUsers: users.length,
-        activeCampaigns: campaigns.length
+        activeCampaigns: campaigns.length,
+        completedProfiles: users.filter(u => u.profileCompleted).length
     });
 });
 
@@ -83,7 +145,7 @@ app.post('/api/campaigns/create', (req, res) => {
         
         // Create campaign object
         const newCampaign = {
-            id: Date.now().toString(), // Simple ID for now
+            id: Date.now().toString(),
             ...campaignData,
             status: 'pending',
             createdAt: new Date(),
@@ -143,16 +205,17 @@ app.get('/users', (req, res) => {
         users: users.map(user => ({
             name: user.firstName,
             telegramId: user.telegramId,
+            profile: user.profileCompleted ? user.profile.primaryProfile.label : 'Not completed',
             isActive: user.isActive || false
         }))
     });
 });
 
-// Automatic Assignment System
+// Smart Assignment System (Inclusive Approach)
 function createAutomaticAssignments(campaign) {
-    console.log(`🤖 Creating automatic assignments for: ${campaign.brandName}`);
+    console.log(`🤖 Creating assignments for: ${campaign.brandName}`);
     
-    // Get available users (not in cooldown, has Twitter account)
+    // Get ALL available users (regardless of profile status)
     const availableUsers = getAvailableUsers();
     
     if (availableUsers.length === 0) {
@@ -160,12 +223,12 @@ function createAutomaticAssignments(campaign) {
         return;
     }
     
-    // Calculate how many users we need (up to the campaign's estimated participants)
+    // Select users - everyone gets a fair chance
     const maxParticipants = Math.min(availableUsers.length, campaign.estimatedParticipants);
-    const selectedUsers = selectBestUsers(availableUsers, maxParticipants);
+    const selectedUsers = selectBestUsersInclusive(availableUsers, maxParticipants);
     
-    // Distribute roles among selected users
-    const roleDistribution = distributeRoles(selectedUsers);
+    // Distribute roles (profile helps but isn't required)
+    const roleDistribution = distributeRolesInclusive(selectedUsers, campaign);
     
     // Create assignments with organic timing
     const campaignAssignments = createTimedAssignments(campaign, roleDistribution);
@@ -178,9 +241,10 @@ function createAutomaticAssignments(campaign) {
     campaign.status = 'active';
     
     // Notify selected users
-    notifySelectedUsers(campaignAssignments);
+    notifySelectedUsersInclusive(campaignAssignments);
     
     console.log(`✅ Created ${campaignAssignments.length} assignments for ${selectedUsers.length} users`);
+    console.log(`📊 ${selectedUsers.filter(u => u.profileCompleted).length} users have completed profiles (bonus earnings!)`);
 }
 
 function getAvailableUsers() {
@@ -198,19 +262,24 @@ function getAvailableUsers() {
     });
 }
 
-function selectBestUsers(availableUsers, maxParticipants) {
-    // Sort users by engagement score and last participation
+function selectBestUsersInclusive(availableUsers, maxParticipants) {
+    // Fair selection - everyone gets a chance, profile just adds bonus points
     const scoredUsers = availableUsers.map(user => {
         const timeSinceLastParticipation = getTimeSinceLastParticipation(user);
         const engagementScore = user.engagementRate || 5; // Default engagement rate
         
-        // Score combines engagement and fairness (time since last participation)
-        const score = (engagementScore * 0.6) + (timeSinceLastParticipation * 0.4);
+        // Base score (same for everyone)
+        let score = (engagementScore * 0.6) + (timeSinceLastParticipation * 0.4);
+        
+        // Small profile bonus (not game-changing)
+        if (user.profileCompleted) {
+            score += 1; // Just a small boost, not decisive
+        }
         
         return { ...user, score };
     });
     
-    // Sort by score (highest first) and take the best users
+    // Sort by score but ensure fairness
     return scoredUsers
         .sort((a, b) => b.score - a.score)
         .slice(0, maxParticipants);
@@ -225,40 +294,138 @@ function getTimeSinceLastParticipation(user) {
     return Math.min(10, hoursSince / 24);
 }
 
-function distributeRoles(selectedUsers) {
-    const totalUsers = selectedUsers.length;
-    const roles = {
-        initiators: Math.ceil(totalUsers * ASSIGNMENT_CONFIG.roles.initiator),
-        repliers: Math.ceil(totalUsers * ASSIGNMENT_CONFIG.roles.replier),
-        retweeters: Math.ceil(totalUsers * ASSIGNMENT_CONFIG.roles.retweeter),
-        quoters: Math.ceil(totalUsers * ASSIGNMENT_CONFIG.roles.quoter)
-    };
-    
-    // Make sure we don't exceed total users
-    const totalRoles = Object.values(roles).reduce((sum, count) => sum + count, 0);
-    if (totalRoles > totalUsers) {
-        // Adjust by reducing largest categories first
-        const excess = totalRoles - totalUsers;
-        roles.repliers = Math.max(1, roles.repliers - Math.ceil(excess / 2));
-        roles.retweeters = Math.max(1, roles.retweeters - Math.floor(excess / 2));
-    }
-    
+function distributeRolesInclusive(selectedUsers, campaign) {
     const distribution = [];
-    let userIndex = 0;
     
-    // Assign roles
-    ['initiators', 'repliers', 'retweeters', 'quoters'].forEach(roleType => {
-        const role = roleType.slice(0, -1); // Remove 's' to get singular
-        for (let i = 0; i < roles[roleType] && userIndex < selectedUsers.length; i++) {
-            distribution.push({
-                user: selectedUsers[userIndex],
-                role: role
-            });
-            userIndex++;
-        }
+    selectedUsers.forEach(user => {
+        // Get role suggestion (profile helps but defaults to fair distribution)
+        const role = getRoleForUserInclusive(user, campaign);
+        distribution.push({
+            user: user,
+            role: role,
+            hasProfile: user.profileCompleted || false,
+            profileMatch: user.profileCompleted ? isUserMatchForCampaign(user, campaign) : false
+        });
     });
     
-    return distribution;
+    // Ensure balanced role distribution
+    return balanceRoleDistributionFairly(distribution);
+}
+
+function getRoleForUserInclusive(user, campaign) {
+    // If user has profile, use smart assignment
+    if (user.profileCompleted && user.profile) {
+        const profile = user.profile.primaryProfile;
+        const authenticity = user.profile.authenticityScore;
+        
+        // High authenticity users get better roles
+        if (authenticity > 85) {
+            return Math.random() > 0.5 ? 'initiator' : 'quoter';
+        }
+        
+        // Profile-based suggestions
+        if (profile.label.includes('Student') || profile.label.includes('Creative')) {
+            return Math.random() > 0.6 ? 'replier' : 'quoter';
+        }
+        
+        if (profile.label.includes('Professional') || profile.label.includes('Entrepreneur')) {
+            return Math.random() > 0.5 ? 'retweeter' : 'replier';
+        }
+    }
+    
+    // Default fair distribution for everyone
+    const roles = ['initiator', 'replier', 'retweeter', 'quoter'];
+    return roles[Math.floor(Math.random() * roles.length)];
+}
+
+function balanceRoleDistributionFairly(distribution) {
+    // Simple rotation to ensure everyone gets different roles over time
+    const totalUsers = distribution.length;
+    const targetCounts = {
+        initiator: Math.ceil(totalUsers * 0.2),
+        replier: Math.ceil(totalUsers * 0.4),
+        retweeter: Math.ceil(totalUsers * 0.25),
+        quoter: Math.ceil(totalUsers * 0.15)
+    };
+    
+    // Adjust to fit total users
+    const totalRoles = Object.values(targetCounts).reduce((sum, count) => sum + count, 0);
+    if (totalRoles > totalUsers) {
+        targetCounts.replier = Math.max(1, targetCounts.replier - (totalRoles - totalUsers));
+    }
+    
+    // Redistribute fairly while respecting preferences
+    const finalDistribution = [];
+    
+    // Assign initiators first (give to high authenticity if available)
+    const highAuthUsers = distribution.filter(d => d.hasProfile && d.user.profile.authenticityScore > 80);
+    let initiatorsAssigned = 0;
+    
+    for (let i = 0; i < Math.min(targetCounts.initiator, highAuthUsers.length); i++) {
+        finalDistribution.push({
+            ...highAuthUsers[i],
+            role: 'initiator'
+        });
+        initiatorsAssigned++;
+    }
+    
+    // Fill remaining roles fairly
+    const remainingUsers = distribution.filter(d => !finalDistribution.some(fd => fd.user.telegramId === d.user.telegramId));
+    const remainingRoles = [];
+    
+    // Add remaining initiators
+    for (let i = initiatorsAssigned; i < targetCounts.initiator; i++) {
+        remainingRoles.push('initiator');
+    }
+    
+    // Add other roles
+    for (let i = 0; i < targetCounts.replier; i++) remainingRoles.push('replier');
+    for (let i = 0; i < targetCounts.retweeter; i++) remainingRoles.push('retweeter');
+    for (let i = 0; i < targetCounts.quoter; i++) remainingRoles.push('quoter');
+    
+    // Shuffle roles for fairness
+    for (let i = remainingRoles.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [remainingRoles[i], remainingRoles[j]] = [remainingRoles[j], remainingRoles[i]];
+    }
+    
+    // Assign remaining roles
+    remainingUsers.forEach((assignment, index) => {
+        finalDistribution.push({
+            ...assignment,
+            role: remainingRoles[index] || 'replier'
+        });
+    });
+    
+    return finalDistribution;
+}
+
+function isUserMatchForCampaign(user, campaign) {
+    if (!user.profile || !user.profileCompleted) return false;
+    
+    const userProfile = user.profile.primaryProfile;
+    
+    // Check if campaign has target audience
+    if (campaign.targetAudience) {
+        const targetLower = campaign.targetAudience.toLowerCase();
+        const profileLower = userProfile.label.toLowerCase();
+        
+        // Check for keyword matches
+        if (targetLower.includes('student') && profileLower.includes('student')) return true;
+        if (targetLower.includes('tech') && profileLower.includes('tech')) return true;
+        if (targetLower.includes('professional') && profileLower.includes('professional')) return true;
+        if (targetLower.includes('creative') && profileLower.includes('creative')) return true;
+        if (targetLower.includes('entrepreneur') && profileLower.includes('entrepreneur')) return true;
+    }
+    
+    // Check spending power match
+    if (campaign.package === 'premium' && user.profile.spendingPower === 'high') return true;
+    if (campaign.package === 'starter' && user.profile.spendingPower === 'emerging') return true;
+    
+    // High authenticity users match well with any campaign
+    if (user.profile.authenticityScore > 85) return true;
+    
+    return false;
 }
 
 function createTimedAssignments(campaign, roleDistribution) {
@@ -281,7 +448,8 @@ function createTimedAssignments(campaign, roleDistribution) {
             scheduledTime: scheduledTime,
             status: 'pending',
             content: generateContentForRole(campaign, assignment.role),
-            estimatedEarning: calculateEarning(campaign, assignment.role)
+            estimatedEarning: calculateEarning(campaign, assignment.role),
+            isProfileMatch: assignment.profileMatch || false
         };
         
         assignments.push(newAssignment);
@@ -349,20 +517,50 @@ function calculateEarning(campaign, role) {
     return Math.round(basePayout * roleMultiplier);
 }
 
-async function notifySelectedUsers(assignments) {
+async function notifySelectedUsersInclusive(assignments) {
     for (const assignment of assignments) {
         try {
-            const message = 
-                `🎉 YOU'VE BEEN SELECTED!\n\n` +
-                `Campaign: ${getCampaignById(assignment.campaignId).brandName}\n` +
-                `Your Role: ${assignment.role.toUpperCase()}\n` +
-                `💰 Estimated Earning: ₦${assignment.estimatedEarning.toLocaleString()}\n` +
-                `⏰ Scheduled: ${assignment.scheduledTime.toLocaleString()}\n\n` +
-                `📝 Suggested Content:\n"${assignment.content}"\n\n` +
-                `💡 You can customize this message to match your style!\n` +
-                `We'll remind you 15 minutes before it's time.`;
+            const campaign = getCampaignById(assignment.campaignId);
+            const user = assignment.user;
+            
+            // Base earning for everyone
+            let earning = assignment.estimatedEarning;
+            let bonusMessage = '';
+            
+            // Profile bonus (nice to have, not essential)
+            if (user.profileCompleted && user.profile) {
+                const profileBonus = Math.round(earning * 0.15); // 15% bonus for having profile
+                
+                if (assignment.isProfileMatch && user.profile.authenticityScore > 80) {
+                    const matchBonus = Math.round(earning * 0.1); // Additional 10% for perfect match
+                    earning += profileBonus + matchBonus;
+                    bonusMessage = `\n🎯 Profile Bonus: +₦${(profileBonus + matchBonus).toLocaleString()}! (Profile + Match)`;
+                } else if (user.profile.authenticityScore > 80) {
+                    earning += profileBonus;
+                    bonusMessage = `\n💡 Profile Bonus: +₦${profileBonus.toLocaleString()}! (Completed profile)`;
+                }
+            }
+            
+            let message = `🎉 YOU'VE BEEN SELECTED!\n\n` +
+                         `Campaign: ${campaign.brandName}\n` +
+                         `Your Role: ${assignment.role.toUpperCase()}\n` +
+                         `💰 Total Earning: ₦${earning.toLocaleString()}${bonusMessage}\n` +
+                         `⏰ Scheduled: ${assignment.scheduledTime.toLocaleString()}\n\n`;
+            
+            if (user.profileCompleted && user.profile) {
+                message += `🧠 Your Profile: ${user.profile.primaryProfile.label}\n` +
+                          `⭐ Authenticity: ${user.profile.authenticityScore}/100\n\n`;
+            } else {
+                message += `💡 Complete your profile with /profile for bonus earnings!\n\n`;
+            }
+            
+            message += `📝 Suggested Content:\n"${assignment.content}"\n\n` +
+                      `💡 Customize this message to match your style!`;
             
             await bot.sendMessage(assignment.userId, message);
+            
+            // Update earning to include bonus
+            assignment.estimatedEarning = earning;
             
             // Small delay to avoid rate limiting
             await new Promise(resolve => setTimeout(resolve, 200));
@@ -395,7 +593,7 @@ function addUserToCooldown(userId, campaignSize) {
     console.log(`⏰ User ${userId} in cooldown for ${cooldownHours} hours`);
 }
 
-// Function to notify users about new campaigns (updated)
+// Function to notify users about new campaigns
 async function notifyUsersAboutCampaign(campaign) {
     const activeUsers = users.filter(user => user.isActive && user.twitterHandle);
     
@@ -412,8 +610,8 @@ async function notifyUsersAboutCampaign(campaign) {
         `⏱️ Duration: ${campaign.duration} hours\n` +
         `📊 Estimated reach: ${formatNumber(campaign.estimatedReach)}\n\n` +
         `💡 ${campaign.description.substring(0, 100)}...\n\n` +
-        `🤖 Assignments are being created automatically!\n` +
-        `Check /campaigns to see if you're selected!`;
+        `🤖 Smart assignments are being created!\n` +
+        `Complete your profile for better matches: /profile`;
     
     let notified = 0;
     
@@ -463,7 +661,8 @@ bot.onText(/\/start/, (msg) => {
         registeredAt: new Date(),
         isActive: true,
         earnings: 0,
-        campaigns: 0
+        campaigns: 0,
+        profileCompleted: false
     };
     
     users.push(newUser);
@@ -473,9 +672,9 @@ bot.onText(/\/start/, (msg) => {
         `You're now registered and ready to earn money from Twitter engagement!\n\n` +
         `📱 Next steps:\n` +
         `1. Link your Twitter account with /twitter\n` +
-        `2. Check available campaigns with /campaigns\n` +
-        `3. Get help anytime with /help\n\n` +
-        `💰 Start earning today!`
+        `2. Complete your smart profile (2 minutes)\n` +
+        `3. Get matched with perfect campaigns!\n\n` +
+        `💰 Users with completed profiles earn 20% more!`
     );
     
     console.log(`✅ New user registered: ${user.first_name} (${chatId})`);
@@ -488,18 +687,23 @@ bot.onText(/\/help/, (msg) => {
     bot.sendMessage(chatId, 
         `🤖 Twitter Engagement Platform Commands:\n\n` +
         `/start - Register/Login\n` +
-        `/twitter - Link Twitter account\n` +
-        `/campaigns - View available campaigns\n` +
+        `/twitter - Link Twitter & complete smart profile\n` +
+        `/profile - View your profile summary\n` +
+        `/campaigns - View campaigns matched to you\n` +
         `/assignments - Check your active assignments\n` +
         `/earnings - Check your earnings\n` +
         `/status - Your account status\n` +
         `/help - Show this help\n\n` +
-        `💡 Tip: Assignments are created automatically!\n` +
-        `Stay active and keep your Twitter linked!`
+        `🧠 Smart Features:\n` +
+        `• AI-powered profile matching\n` +
+        `• Personalized campaign recommendations\n` +
+        `• Authenticity-based earnings bonuses\n` +
+        `• Profile-specific role assignments\n\n` +
+        `💡 Complete your profile for better matches and higher earnings!`
     );
 });
 
-// /twitter command - Link Twitter account
+// /twitter command with optional profiling
 bot.onText(/\/twitter/, (msg) => {
     const chatId = msg.chat.id;
     
@@ -522,10 +726,33 @@ bot.onText(/\/twitter/, (msg) => {
                 users[userIndex].twitterHandle = twitterHandle;
                 
                 bot.sendMessage(chatId, 
-                    `✅ Twitter account linked successfully!\n\n` +
-                    `🐦 Twitter: @${twitterHandle}\n\n` +
-                    `You can now participate in campaigns! Use /campaigns to see what's available.`
+                    `✅ Twitter account linked: @${twitterHandle}\n\n` +
+                    `🎉 You're now ready to participate in campaigns!\n\n` +
+                    `💡 Optional: Complete a 2-minute profile for 15-25% bonus earnings!\n\n` +
+                    `Reply "yes" to start the profile, or use /campaigns to see available opportunities.`
                 );
+                
+                // Wait for profile decision
+                bot.once('message', (profileResponse) => {
+                    if (profileResponse.chat.id === chatId && 
+                        profileResponse.text.toLowerCase().includes('yes')) {
+                        
+                        bot.sendMessage(chatId, 
+                            `🧠 Great! Let's create your smart profile for bonus earnings!\n\n` +
+                            `This helps us match you with campaigns you'll actually enjoy.`
+                        );
+                        
+                        setTimeout(() => {
+                            startSmartProfiling(chatId);
+                        }, 2000);
+                    } else {
+                        bot.sendMessage(chatId, 
+                            `✅ No problem! You're all set to participate in campaigns.\n\n` +
+                            `Use /campaigns to see available opportunities.\n` +
+                            `You can complete your profile anytime with /profile for bonus earnings!`
+                        );
+                    }
+                });
                 
                 console.log(`📱 User ${users[userIndex].firstName} linked Twitter: @${twitterHandle}`);
             }
@@ -533,7 +760,335 @@ bot.onText(/\/twitter/, (msg) => {
     });
 });
 
-// /campaigns command
+// Smart Profiling System (Optional)
+function startSmartProfiling(chatId) {
+    userProfilingStates[chatId] = {
+        currentQuestion: 0,
+        answers: {},
+        questionOrder: ['age_range', 'daily_routine', 'spending_priority', 'influence_style', 'discovery_style']
+    };
+    
+    askProfilingQuestion(chatId);
+}
+
+function askProfilingQuestion(chatId) {
+    const state = userProfilingStates[chatId];
+    const questionKey = state.questionOrder[state.currentQuestion];
+    const question = PROFILING_QUESTIONS[questionKey];
+    
+    if (!question) {
+        // Profiling complete
+        completeUserProfile(chatId);
+        return;
+    }
+    
+    const questionNumber = state.currentQuestion + 1;
+    const totalQuestions = state.questionOrder.length;
+    
+    let message = `📊 Profile Question ${questionNumber}/${totalQuestions}\n\n`;
+    message += `${question.question}\n\n`;
+    
+    // Create inline keyboard with options
+    const keyboard = question.options.map((option, index) => [
+        { text: `${index + 1}. ${option}`, callback_data: `profile_${questionKey}_${index}` }
+    ]);
+    
+    bot.sendMessage(chatId, message, {
+        reply_markup: {
+            inline_keyboard: keyboard
+        }
+    });
+}
+
+// Handle profiling answers
+bot.on('callback_query', (query) => {
+    const chatId = query.message.chat.id;
+    const data = query.data;
+    
+    if (data.startsWith('profile_')) {
+        const [, questionKey, optionIndex] = data.split('_');
+        const state = userProfilingStates[chatId];
+        
+        if (state) {
+            const question = PROFILING_QUESTIONS[questionKey];
+            const selectedOption = question.options[parseInt(optionIndex)];
+            
+            // Store answer
+            state.answers[questionKey] = selectedOption;
+            
+            // Acknowledge selection
+            bot.editMessageText(
+                `✅ ${question.question}\n\nYour answer: ${selectedOption}`,
+                {
+                    chat_id: chatId,
+                    message_id: query.message.message_id
+                }
+            );
+            
+            // Move to next question
+            state.currentQuestion++;
+            
+            setTimeout(() => {
+                askProfilingQuestion(chatId);
+            }, 1500);
+        }
+    }
+    
+    bot.answerCallbackQuery(query.id);
+});
+
+function completeUserProfile(chatId) {
+    const state = userProfilingStates[chatId];
+    const answers = state.answers;
+    
+    // Generate user persona
+    const persona = generateUserPersona(answers);
+    
+    // Update user in database
+    const userIndex = users.findIndex(u => u.telegramId === chatId);
+    if (userIndex !== -1) {
+        users[userIndex].profile = persona;
+        users[userIndex].profileCompleted = true;
+        users[userIndex].profileCompletedAt = new Date();
+    }
+    
+    // Send personalized completion message
+    const completionMessage = generateCompletionMessage(persona);
+    
+    bot.sendMessage(chatId, completionMessage);
+    
+    // Clean up profiling state
+    delete userProfilingStates[chatId];
+    
+    console.log(`🧠 Profile completed for user ${chatId}: ${persona.primaryProfile.label}`);
+}
+
+function generateUserPersona(answers) {
+    // Generate persona based on answers
+    const persona = {
+        primaryProfile: determineProfile(answers),
+        spendingPower: determineSpendingPower(answers),
+        authenticityScore: determineAuthenticity(answers),
+        marketingValue: "high"
+    };
+    
+    persona.recommendedCampaignTypes = getRecommendedCampaigns(persona, answers);
+    
+    return persona;
+}
+
+function determineProfile(answers) {
+    const routine = answers.daily_routine || "";
+    const spending = answers.spending_priority || "";
+    const influence = answers.influence_style || "";
+    
+    // Smart profile matching
+    if (routine.includes("Classes") && spending.includes("gadgets")) {
+        return {
+            label: "Tech-Savvy Student",
+            description: "University students passionate about technology and gadgets",
+            bestFor: ["tech_products", "educational_apps", "student_services"],
+            authenticityLevel: "very_high"
+        };
+    }
+    
+    if (routine.includes("Classes") && spending.includes("Basic needs")) {
+        return {
+            label: "Budget-Smart Student",
+            description: "Students who prioritize value and affordability", 
+            bestFor: ["affordable_products", "student_discounts", "value_services"],
+            authenticityLevel: "very_high"
+        };
+    }
+    
+    if (routine.includes("Office") && spending.includes("Fashion")) {
+        return {
+            label: "Style-Conscious Professional",
+            description: "Young professionals who care about image and status",
+            bestFor: ["fashion", "premium_products", "professional_services"],
+            authenticityLevel: "high"
+        };
+    }
+    
+    if (routine.includes("business") && spending.includes("Skills")) {
+        return {
+            label: "Growth-Focused Entrepreneur", 
+            description: "Business-minded individuals focused on growth and learning",
+            bestFor: ["business_tools", "productivity_apps", "courses"],
+            authenticityLevel: "high"
+        };
+    }
+    
+    if (routine.includes("Creative") && influence.includes("genuinely love")) {
+        return {
+            label: "Passionate Creative",
+            description: "Artists and creators who genuinely love what they share",
+            bestFor: ["creative_tools", "artistic_products", "unique_brands"],
+            authenticityLevel: "very_high"
+        };
+    }
+    
+    if (routine.includes("Job hunting") && influence.includes("value for money")) {
+        return {
+            label: "Honest Value Advisor",
+            description: "Job seekers who give very honest opinions about value",
+            bestFor: ["affordable_products", "job_services", "skill_development"],
+            authenticityLevel: "very_high"
+        };
+    }
+    
+    // Default profile
+    return {
+        label: "Authentic Influencer",
+        description: "Genuine social media user with authentic voice",
+        bestFor: ["general_products", "lifestyle_brands"],
+        authenticityLevel: "high"
+    };
+}
+
+function determineSpendingPower(answers) {
+    const age = answers.age_range || "";
+    const routine = answers.daily_routine || "";
+    const spending = answers.spending_priority || "";
+    
+    if (routine.includes("Classes") || spending.includes("Basic needs")) {
+        return "emerging";
+    }
+    
+    if (routine.includes("business") || spending.includes("investments")) {
+        return "high";
+    }
+    
+    if (routine.includes("Office") && (age.includes("26-30") || age.includes("31-35"))) {
+        return "moderate_to_high";
+    }
+    
+    return "moderate";
+}
+
+function determineAuthenticity(answers) {
+    let score = 70; // Base score
+    
+    const influence = answers.influence_style || "";
+    const discovery = answers.discovery_style || "";
+    const routine = answers.daily_routine || "";
+    
+    if (influence.includes("genuinely love")) score += 20;
+    if (influence.includes("solved a real problem")) score += 15;
+    if (discovery.includes("friends and people I trust")) score += 10;
+    if (routine.includes("Classes") || routine.includes("Job hunting")) score += 15;
+    
+    return Math.min(100, score);
+}
+
+function getRecommendedCampaigns(persona, answers) {
+    const campaigns = [];
+    
+    // Add campaign types based on profile
+    if (persona.primaryProfile.bestFor.includes("tech_products")) {
+        campaigns.push("Tech & Gadgets", "Apps & Software", "Educational Technology");
+    }
+    
+    if (persona.spendingPower === "high") {
+        campaigns.push("Premium Brands", "Luxury Products", "Investment Services");
+    }
+    
+    if (persona.authenticityScore > 85) {
+        campaigns.push("Authentic Reviews", "Personal Experience Sharing", "Honest Testimonials");
+    }
+    
+    if (persona.primaryProfile.bestFor.includes("affordable_products")) {
+        campaigns.push("Budget-Friendly Products", "Student Discounts", "Value Services");
+    }
+    
+    return campaigns.slice(0, 5); // Limit to top 5
+}
+
+function generateCompletionMessage(persona) {
+    return `🎉 Profile Complete!\n\n` +
+           `Your Profile: **${persona.primaryProfile.label}**\n` +
+           `${persona.primaryProfile.description}\n\n` +
+           `💰 Spending Power: ${persona.spendingPower.replace('_', ' ').toUpperCase()}\n` +
+           `🎯 Authenticity Score: ${persona.authenticityScore}/100\n\n` +
+           `✨ You're perfect for these campaign types:\n` +
+           persona.recommendedCampaignTypes.map(type => `• ${type}`).join('\n') + '\n\n' +
+           `💰 Earnings Boost: You'll now earn 15-25% more on campaigns!\n\n` +
+           `🚀 You're all set! Use /campaigns to see what's available!`;
+}
+
+// /profile command - View or complete profile
+bot.onText(/\/profile/, (msg) => {
+    const chatId = msg.chat.id;
+    const user = users.find(u => u.telegramId === chatId);
+    
+    if (!user) {
+        bot.sendMessage(chatId, `Please register first with /start`);
+        return;
+    }
+    
+    if (!user.twitterHandle) {
+        bot.sendMessage(chatId, 
+            `🐦 Please link your Twitter account first!\n\n` +
+            `Use /twitter to link your account.`
+        );
+        return;
+    }
+    
+    if (!user.profileCompleted) {
+        bot.sendMessage(chatId, 
+            `🧠 Complete Your Profile for Bonus Earnings!\n\n` +
+            `📈 Benefits:\n` +
+            `• 15% base bonus on all campaigns\n` +
+            `• Up to 25% bonus for perfect matches\n` +
+            `• Priority for campaigns in your interests\n` +
+            `• Better role assignments\n\n` +
+            `⏱️ Takes just 2 minutes!\n\n` +
+            `Reply "start" to begin the profile questionnaire.`
+        );
+        
+        // Wait for confirmation
+        bot.once('message', (response) => {
+            if (response.chat.id === chatId && 
+                response.text.toLowerCase().includes('start')) {
+                
+                startSmartProfiling(chatId);
+            }
+        });
+        
+        return;
+    }
+    
+    // Show completed profile
+    const profile = user.profile;
+    const message = 
+        `👤 Your Profile Summary\n\n` +
+        `🎯 Profile Type: ${profile.primaryProfile.label}\n` +
+        `📝 Description: ${profile.primaryProfile.description}\n\n` +
+        `💰 Spending Power: ${profile.spendingPower.replace('_', ' ').toUpperCase()}\n` +
+        `🎭 Authenticity Score: ${profile.authenticityScore}/100\n` +
+        `⭐ Marketing Value: ${profile.marketingValue.toUpperCase()}\n\n` +
+        `✨ Best Campaign Types:\n` +
+        profile.recommendedCampaignTypes.map(type => `• ${type}`).join('\n') + '\n\n' +
+        `💰 Earnings Bonus: ${profile.authenticityScore > 80 ? '15-25%' : '15%'}\n\n` +
+        `🔄 Want to retake the questionnaire? Reply "retake"`;
+    
+    bot.sendMessage(chatId, message);
+    
+    // Allow profile retaking
+    bot.once('message', (response) => {
+        if (response.chat.id === chatId && 
+            response.text.toLowerCase().includes('retake')) {
+            
+            bot.sendMessage(chatId, `🔄 Retaking profile questionnaire...`);
+            
+            setTimeout(() => {
+                startSmartProfiling(chatId);
+            }, 1000);
+        }
+    });
+});
+
+// /campaigns command - Show campaigns to everyone
 bot.onText(/\/campaigns/, (msg) => {
     const chatId = msg.chat.id;
     const user = users.find(u => u.telegramId === chatId);
@@ -546,7 +1101,7 @@ bot.onText(/\/campaigns/, (msg) => {
     if (!user.twitterHandle) {
         bot.sendMessage(chatId, 
             `🐦 Please link your Twitter account first!\n\n` +
-            `Use /twitter to link your account, then you can participate in campaigns.`
+            `Use /twitter to link your account and start earning!`
         );
         return;
     }
@@ -554,27 +1109,54 @@ bot.onText(/\/campaigns/, (msg) => {
     const availableCampaigns = campaigns.filter(c => c.status === 'pending' || c.status === 'active');
     
     if (availableCampaigns.length === 0) {
-        bot.sendMessage(chatId, 
-            `📋 No Active Campaigns\n\n` +
-            `There are no campaigns available right now.\n` +
-            `New campaigns are posted regularly!\n\n` +
-            `💡 We'll notify you when new campaigns are available.`
-        );
+        let message = `📋 No Active Campaigns\n\n` +
+                     `There are no campaigns available right now.\n` +
+                     `New campaigns are posted regularly!\n\n`;
+        
+        if (user.profileCompleted) {
+            message += `💡 Your profile: ${user.profile.primaryProfile.label}\n` +
+                      `You'll get priority for: ${user.profile.recommendedCampaignTypes.slice(0, 2).join(', ')}`;
+        } else {
+            message += `💡 Complete your profile with /twitter for bonus earnings!`;
+        }
+        
+        bot.sendMessage(chatId, message);
     } else {
         let message = `🚀 Available Campaigns:\n\n`;
         
         availableCampaigns.forEach((campaign, index) => {
-            const estimatedEarning = Math.round(campaign.budget * 0.65 / campaign.estimatedParticipants);
+            const baseEarning = Math.round(campaign.budget * 0.65 / campaign.estimatedParticipants);
             
             message += `${index + 1}. ${campaign.brandName}\n`;
-            message += `💰 Est. Earning: ₦${estimatedEarning.toLocaleString()}\n`;
+            message += `💰 Base Earning: ₦${baseEarning.toLocaleString()}\n`;
+            
+            // Show potential bonuses
+            if (user.profileCompleted) {
+                const profileBonus = Math.round(baseEarning * 0.15);
+                const isMatch = isUserMatchForCampaign(user, campaign);
+                
+                if (isMatch && user.profile.authenticityScore > 80) {
+                    const totalBonus = Math.round(baseEarning * 0.25);
+                    message += `🎯 Your Potential: ₦${(baseEarning + totalBonus).toLocaleString()} (Perfect Match!)\n`;
+                } else {
+                    message += `💡 Your Potential: ₦${(baseEarning + profileBonus).toLocaleString()} (Profile Bonus)\n`;
+                }
+            } else {
+                const profileBonus = Math.round(baseEarning * 0.15);
+                message += `💡 With Profile: ₦${(baseEarning + profileBonus).toLocaleString()} (Complete /twitter)\n`;
+            }
+            
             message += `⏱️ Duration: ${campaign.duration} hours\n`;
             message += `👥 Spots: ${campaign.participants.length}/${campaign.estimatedParticipants}\n`;
             message += `📊 Package: ${campaign.package}\n\n`;
         });
         
-        message += `💡 Assignments are created automatically based on your activity!\n`;
-        message += `Use /assignments to check if you've been selected.`;
+        message += `🎯 Everyone gets selected based on fairness and availability!\n`;
+        if (!user.profileCompleted) {
+            message += `💡 Complete your profile for bonus earnings: /twitter`;
+        } else {
+            message += `✅ Profile complete - you're ready for bonus earnings!`;
+        }
         
         bot.sendMessage(chatId, message);
     }
@@ -593,12 +1175,17 @@ bot.onText(/\/assignments/, (msg) => {
     const userAssignments = assignments.filter(a => a.userId === chatId);
     
     if (userAssignments.length === 0) {
-        bot.sendMessage(chatId, 
-            `📋 No Current Assignments\n\n` +
-            `You don't have any active assignments right now.\n` +
-            `Make sure your Twitter account is linked and stay active!\n\n` +
-            `💡 New campaigns are created regularly.`
-        );
+        let message = `📋 No Current Assignments\n\n` +
+                     `You don't have any active assignments right now.\n` +
+                     `Make sure your Twitter account is linked with /twitter!\n\n`;
+        
+        if (!user.profileCompleted) {
+            message += `💡 Complete your profile for bonus earnings: /profile`;
+        } else {
+            message += `✅ Profile complete - you're ready for campaigns!`;
+        }
+        
+        bot.sendMessage(chatId, message);
         return;
     }
     
@@ -648,11 +1235,20 @@ bot.onText(/\/earnings/, (msg) => {
         return;
     }
     
+    // Calculate potential bonus
+    let bonusInfo = '';
+    if (user.profileCompleted && user.profile) {
+        const bonusPercent = user.profile.authenticityScore > 80 ? '15-25%' : '15%';
+        bonusInfo = `\n🎯 Profile Bonus: ${bonusPercent} extra on all campaigns!`;
+    } else {
+        bonusInfo = `\n💡 Complete /profile for 15-25% bonus earnings!`;
+    }
+    
     bot.sendMessage(chatId, 
         `💰 Your Earnings Summary\n\n` +
         `Total Earned: ₦${user.earnings || 0}\n` +
         `Campaigns Completed: ${user.campaigns || 0}\n` +
-        `Account Status: ${user.isActive ? '✅ Active' : '❌ Inactive'}\n\n` +
+        `Account Status: ${user.isActive ? '✅ Active' : '❌ Inactive'}${bonusInfo}\n\n` +
         `💡 Keep participating to earn more!`
     );
 });
@@ -667,14 +1263,24 @@ bot.onText(/\/status/, (msg) => {
         return;
     }
     
+    let profileStatus = '';
+    if (user.profileCompleted && user.profile) {
+        profileStatus = `✅ ${user.profile.primaryProfile.label} (${user.profile.authenticityScore}/100)`;
+    } else {
+        profileStatus = `❌ Not completed (missing bonus earnings!)`;
+    }
+    
     bot.sendMessage(chatId, 
         `📊 Account Status\n\n` +
         `Name: ${user.firstName} ${user.lastName}\n` +
         `Twitter: ${user.twitterHandle ? '@' + user.twitterHandle : '❌ Not linked'}\n` +
+        `Profile: ${profileStatus}\n` +
         `Status: ${user.isActive ? '✅ Active' : '❌ Inactive'}\n` +
         `Registered: ${user.registeredAt.toDateString()}\n` +
         `Total Earnings: ₦${user.earnings || 0}\n\n` +
-        `${!user.twitterHandle ? '📝 Link your Twitter with /twitter' : '🎉 You\'re all set!'}`
+        `${!user.twitterHandle ? '📝 Link your Twitter with /twitter' : 
+          !user.profileCompleted ? '🧠 Complete your profile with /profile for bonuses' : 
+          '🎉 You\'re all set for maximum earnings!'}`
     );
 });
 
@@ -684,7 +1290,7 @@ bot.on('message', (msg) => {
     const text = msg.text;
     
     // Ignore if it's a command we handle or not a command
-    if (!text || !text.startsWith('/') || text.match(/\/(start|help|twitter|campaigns|earnings|status|assignments)/)) {
+    if (!text || !text.startsWith('/') || text.match(/\/(start|help|twitter|campaigns|earnings|status|assignments|profile)/)) {
         return;
     }
     
@@ -709,6 +1315,7 @@ app.listen(PORT, () => {
     console.log(`🤖 Telegram bot is active and listening...`);
     console.log(`👥 Total registered users: ${users.length}`);
     console.log(`📱 Go to Telegram and message your bot to test it!`);
+    console.log(`🧠 Smart profiling enabled - users earn bonus for completing profiles!`);
 });
 
 // Handle server shutdown gracefully
