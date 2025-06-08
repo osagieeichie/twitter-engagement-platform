@@ -762,17 +762,32 @@ bot.onText(/\/twitter/, (msg) => {
 
 // Smart Profiling System (Optional)
 function startSmartProfiling(chatId) {
+    // Clear any existing state first
+    delete userProfilingStates[chatId];
+    
     userProfilingStates[chatId] = {
         currentQuestion: 0,
         answers: {},
-        questionOrder: ['age_range', 'daily_routine', 'spending_priority', 'influence_style', 'discovery_style']
+        questionOrder: ['age_range', 'daily_routine', 'spending_priority', 'influence_style', 'discovery_style'],
+        startedAt: new Date()
     };
+    
+    console.log(`🧠 Started profiling for user ${chatId}`); // Debug line
+    console.log(`📊 Initial state:`, userProfilingStates[chatId]); // Debug line
     
     askProfilingQuestion(chatId);
 }
 
 function askProfilingQuestion(chatId) {
     const state = userProfilingStates[chatId];
+    
+    if (!state) {
+        console.log(`❌ No state found for user ${chatId}, restarting profiling`);
+        // Restart profiling if state was lost
+        startSmartProfiling(chatId);
+        return;
+    }
+    
     const questionKey = state.questionOrder[state.currentQuestion];
     const question = PROFILING_QUESTIONS[questionKey];
     
@@ -784,6 +799,8 @@ function askProfilingQuestion(chatId) {
     
     const questionNumber = state.currentQuestion + 1;
     const totalQuestions = state.questionOrder.length;
+    
+    console.log(`❓ Asking question ${questionNumber}/${totalQuestions} to user ${chatId}: ${questionKey}`); // Debug line
     
     let message = `📊 Profile Question ${questionNumber}/${totalQuestions}\n\n`;
     message += `${question.question}\n\n`;
@@ -797,6 +814,10 @@ function askProfilingQuestion(chatId) {
         reply_markup: {
             inline_keyboard: keyboard
         }
+    }).then(() => {
+        console.log(`✅ Question sent successfully to ${chatId}`); // Debug line
+    }).catch(error => {
+        console.log(`❌ Failed to send question to ${chatId}:`, error.message); // Debug line
     });
 }
 
@@ -811,42 +832,55 @@ bot.on('callback_query', (query) => {
         console.log('📊 Processing profile callback:', data); // Debug line
         
         const [, questionKey, optionIndex] = data.split('_');
-        const state = userProfilingStates[chatId];
+        let state = userProfilingStates[chatId];
         
         console.log('👤 User state exists:', !!state); // Debug line
+        console.log('📋 All active states:', Object.keys(userProfilingStates)); // Debug line
         
-        if (state) {
-            const question = PROFILING_QUESTIONS[questionKey];
-            const selectedOption = question.options[parseInt(optionIndex)];
-            
-            console.log(`✅ Answer recorded: ${questionKey} = ${selectedOption}`); // Debug line
-            
-            // Store answer
-            state.answers[questionKey] = selectedOption;
-            
-            // Acknowledge selection
-            bot.editMessageText(
-                `✅ ${question.question}\n\nYour answer: ${selectedOption}`,
-                {
-                    chat_id: chatId,
-                    message_id: query.message.message_id
-                }
-            ).then(() => {
-                console.log('📝 Message edited successfully'); // Debug line
-            }).catch(error => {
-                console.log('❌ Edit message error:', error.message); // Debug line
-            });
-            
-            // Move to next question
-            state.currentQuestion++;
-            
-            setTimeout(() => {
-                console.log(`➡️ Moving to question ${state.currentQuestion + 1}`); // Debug line
-                askProfilingQuestion(chatId);
-            }, 1500);
-        } else {
-            console.log('❌ No profiling state found for user:', chatId); // Debug line
+        if (!state) {
+            console.log('❌ State lost, sending restart message'); // Debug line
+            bot.sendMessage(chatId, 
+                `🔄 Sorry! Your session was interrupted.\n\n` +
+                `Let's restart your profile. Use /profile to begin again.`
+            );
+            bot.answerCallbackQuery(query.id);
+            return;
         }
+        
+        const question = PROFILING_QUESTIONS[questionKey];
+        if (!question) {
+            console.log('❌ Invalid question key:', questionKey);
+            bot.answerCallbackQuery(query.id);
+            return;
+        }
+        
+        const selectedOption = question.options[parseInt(optionIndex)];
+        
+        console.log(`✅ Answer recorded: ${questionKey} = ${selectedOption}`); // Debug line
+        
+        // Store answer
+        state.answers[questionKey] = selectedOption;
+        
+        // Acknowledge selection
+        bot.editMessageText(
+            `✅ ${question.question}\n\nYour answer: ${selectedOption}`,
+            {
+                chat_id: chatId,
+                message_id: query.message.message_id
+            }
+        ).then(() => {
+            console.log('📝 Message edited successfully'); // Debug line
+        }).catch(error => {
+            console.log('❌ Edit message error:', error.message); // Debug line
+        });
+        
+        // Move to next question
+        state.currentQuestion++;
+        
+        setTimeout(() => {
+            console.log(`➡️ Moving to question ${state.currentQuestion + 1}`); // Debug line
+            askProfilingQuestion(chatId);
+        }, 1500);
     }
     
     // Always answer callback query to remove loading state
