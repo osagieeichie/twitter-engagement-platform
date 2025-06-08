@@ -831,7 +831,14 @@ bot.on('callback_query', (query) => {
     if (data.startsWith('profile_')) {
         console.log('📊 Processing profile callback:', data); // Debug line
         
-        const [, questionKey, optionIndex] = data.split('_');
+        // Fix: Better parsing for callback data
+        const parts = data.split('_');
+        const optionIndex = parts.pop(); // Last part is the option index
+        parts.shift(); // Remove 'profile' from the beginning
+        const questionKey = parts.join('_'); // Rejoin the rest as question key
+        
+        console.log('🔍 Parsed questionKey:', questionKey, 'optionIndex:', optionIndex); // Debug line
+        
         let state = userProfilingStates[chatId];
         
         console.log('👤 User state exists:', !!state); // Debug line
@@ -850,6 +857,7 @@ bot.on('callback_query', (query) => {
         const question = PROFILING_QUESTIONS[questionKey];
         if (!question) {
             console.log('❌ Invalid question key:', questionKey);
+            console.log('📋 Available question keys:', Object.keys(PROFILING_QUESTIONS)); // Debug line
             bot.answerCallbackQuery(query.id);
             return;
         }
