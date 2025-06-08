@@ -826,91 +826,105 @@ bot.onText(/\/twitter/, async (msg) => {
     });
 });
 
-// Smart Profiling System (Optional)
-function startSmartProfiling(chatId) {
-    // Clear any existing state first
-    delete userProfilingStates[chatId];
-    
-    userProfilingStates[chatId] = {
-        currentQuestion: 0,
-        answers: {},
-        questionOrder: ['age_range', 'daily_routine', 'spending_priority', 'influence_style', 'discovery_style'],
-        startedAt: new Date()
-    };
-    
-    console.log(`🧠 Started profiling for user ${chatId}`); // Debug line
-    console.log(`📊 Initial state:`, userProfilingStates[chatId]); // Debug line
-    
-    askProfilingQuestion(chatId);
+// Smart Profiling System (Optional) - Updated for MongoDB
+async function startSmartProfiling(chatId) {
+    try {
+        // Clear any existing state first
+        await ProfilingState.deleteOne({ userId: chatId.toString() });
+        
+        // Create new profiling state
+        const profilingState = new ProfilingState({
+            userId: chatId.toString(),
+            currentQuestion: 0,
+            answers: {},
+            questionOrder: ['age_range', 'daily_routine', 'spending_priority', 'influence_style', 'discovery_style']
+        });
+        
+        await profilingState.save();
+        
+        console.log(`🧠 Started profiling for user ${chatId}`);
+        
+        askProfilingQuestion(chatId);
+    } catch (error) {
+        console.error('❌ Error starting profiling:', error);
+        bot.sendMessage(chatId, 'Sorry, there was an error starting your profile. Please try again with /profile');
+    }
 }
 
-function askProfilingQuestion(chatId) {
-    const state = userProfilingStates[chatId];
-    
-    if (!state) {
-        console.log(`❌ No state found for user ${chatId}, restarting profiling`);
-        startSmartProfiling(chatId);
-        return;
-    }
-    
-    const questionKey = state.questionOrder[state.currentQuestion];
-    const question = PROFILING_QUESTIONS[questionKey];
-    
-    if (!question) {
-        completeUserProfile(chatId);
-        return;
-    }
-    
-    const questionNumber = state.currentQuestion + 1;
-    const totalQuestions = state.questionOrder.length;
-    
-    console.log(`❓ Asking question ${questionNumber}/${totalQuestions} to user ${chatId}: ${questionKey}`);
-    
-    let message = `📊 Profile Question ${questionNumber}/${totalQuestions}\n\n`;
-    message += `${question.question}\n\n`;
-    
-    // Initialize answers array for multiple choice questions
-    if (question.type === 'multiple' && !state.answers[questionKey]) {
-        state.answers[questionKey] = [];
-    }
-    
-    // Create inline keyboard with options
-    const keyboard = question.options.map((option, index) => {
-        let text = `${index + 1}. ${option}`;
+async function askProfilingQuestion(chatId) {
+    try {
+        const state = await ProfilingState.findOne({ userId: chatId.toString() });
         
-        // Add checkmark for multiple choice if already selected
-        if (question.type === 'multiple' && state.answers[questionKey] && state.answers[questionKey].includes(option)) {
-            text = `✅ ${text}`;
+        if (!state) {
+            console.log(`❌ No state found for user ${chatId}, restarting profiling`);
+            startSmartProfiling(chatId);
+            return;
         }
         
-        return [{ text: text, callback_data: `profile_${questionKey}_${index}` }];
-    });
-    
-    // Add "Done" button for multiple choice questions
-    if (question.type === 'multiple') {
-        const selectedCount = state.answers[questionKey] ? state.answers[questionKey].length : 0;
-        if (selectedCount > 0) {
-            keyboard.push([{ 
-                text: `✅ Done (${selectedCount} selected)`, 
-                callback_data: `profile_${questionKey}_done` 
-            }]);
+        const questionKey = state.questionOrder[state.currentQuestion];
+        const question = PROFILING_QUESTIONS[questionKey];
+        
+        if (!question) {
+            completeUserProfile(chatId);
+            return;
         }
-        message += `💡 You can select multiple options. Tap "Done" when finished.`;
+        
+        const questionNumber = state.currentQuestion + 1;
+        const totalQuestions = state.questionOrder.length;
+        
+        console.log(`❓ Asking question ${questionNumber}/${totalQuestions} to user ${chatId}: ${questionKey}`);
+        
+        let message = `📊 Profile Question ${questionNumber}/${totalQuestions}\n\n`;
+        message += `${question.question}\n\n`;
+        
+        // Initialize answers array for multiple choice questions
+        if (question.type === 'multiple' && !state.answers[questionKey]) {
+            state.answers[questionKey] = [];
+            await state.save();
+        }
+        
+        // Create inline keyboard with options
+        const keyboard = question.options.map((option, index) => {
+            let text = `${index + 1}. ${option}`;
+            
+            // Add checkmark for multiple choice if already selected
+            if (question.type === 'multiple' && state.answers[questionKey] && state.answers[questionKey].includes(option)) {
+                text = `✅ ${text}`;
+            }
+            
+            return [{ text: text, callback_data: `profile_${questionKey}_${index}` }];
+        });
+        
+        // Add "Done" button for multiple choice questions
+        if (question.type === 'multiple') {
+            const selectedCount = state.answers[questionKey] ? state.answers[questionKey].length : 0;
+            if (selectedCount > 0) {
+                keyboard.push([{ 
+                    text: `✅ Done (${selectedCount} selected)`, 
+                    callback_data: `profile_${questionKey}_done` 
+                }]);
+            }
+            message += `💡 You can select multiple options. Tap "Done" when finished.`;
+        }
+        
+        bot.sendMessage(chatId, message, {
+            reply_markup: {
+                inline_keyboard: keyboard
+            }
+        }).then(() => {
+            console.log(`✅ Question sent successfully to ${chatId}`);
+        }).catch(error => {
+            console.log(`❌ Failed to send question to ${chatId}:`, error.message);
+        });
+        
+    } catch (error) {
+        console.error('❌ Error asking profiling question:', error);
+        bot.sendMessage(chatId, 'Sorry, there was an error with the profiling. Please try again with /profile');
     }
-    
-    bot.sendMessage(chatId, message, {
-        reply_markup: {
-            inline_keyboard: keyboard
-        }
-    }).then(() => {
-        console.log(`✅ Question sent successfully to ${chatId}`);
-    }).catch(error => {
-        console.log(`❌ Failed to send question to ${chatId}:`, error.message);
-    });
 }
 
-// Handle profiling answers
-bot.on('callback_query', (query) => {
+// Handle profiling answers - Updated for MongoDB
+bot.on('callback_query', async (query) => {
     console.log('🔍 Callback query received:', query.data);
     
     const chatId = query.message.chat.id;
@@ -919,40 +933,105 @@ bot.on('callback_query', (query) => {
     if (data.startsWith('profile_')) {
         console.log('📊 Processing profile callback:', data);
         
-        // Parse callback data
-        const parts = data.split('_');
-        const lastPart = parts.pop(); // Could be option index or 'done'
-        parts.shift(); // Remove 'profile'
-        const questionKey = parts.join('_');
-        
-        console.log('🔍 Parsed questionKey:', questionKey, 'action:', lastPart);
-        
-        let state = userProfilingStates[chatId];
-        
-        if (!state) {
-            console.log('❌ State lost, sending restart message');
-            bot.sendMessage(chatId, 
-                `🔄 Sorry! Your session was interrupted.\n\n` +
-                `Let's restart your profile. Use /profile to begin again.`
-            );
-            bot.answerCallbackQuery(query.id);
-            return;
-        }
-        
-        const question = PROFILING_QUESTIONS[questionKey];
-        if (!question) {
-            console.log('❌ Invalid question key:', questionKey);
-            bot.answerCallbackQuery(query.id);
-            return;
-        }
-        
-        // Handle "Done" for multiple choice
-        if (lastPart === 'done') {
+        try {
+            // Parse callback data
+            const parts = data.split('_');
+            const lastPart = parts.pop(); // Could be option index or 'done'
+            parts.shift(); // Remove 'profile'
+            const questionKey = parts.join('_');
+            
+            console.log('🔍 Parsed questionKey:', questionKey, 'action:', lastPart);
+            
+            let state = await ProfilingState.findOne({ userId: chatId.toString() });
+            
+            if (!state) {
+                console.log('❌ State lost, sending restart message');
+                bot.sendMessage(chatId, 
+                    `🔄 Sorry! Your session was interrupted.\n\n` +
+                    `Let's restart your profile. Use /profile to begin again.`
+                );
+                bot.answerCallbackQuery(query.id);
+                return;
+            }
+            
+            const question = PROFILING_QUESTIONS[questionKey];
+            if (!question) {
+                console.log('❌ Invalid question key:', questionKey);
+                bot.answerCallbackQuery(query.id);
+                return;
+            }
+            
+            // Handle "Done" for multiple choice
+            if (lastPart === 'done') {
+                if (question.type === 'multiple') {
+                    const selectedOptions = state.answers[questionKey] || [];
+                    
+                    bot.editMessageText(
+                        `✅ ${question.question}\n\nYour answers: ${selectedOptions.join(', ')}`,
+                        {
+                            chat_id: chatId,
+                            message_id: query.message.message_id
+                        }
+                    );
+                    
+                    // Move to next question
+                    state.currentQuestion++;
+                    await state.save();
+                    
+                    setTimeout(() => {
+                        askProfilingQuestion(chatId);
+                    }, 1500);
+                }
+                bot.answerCallbackQuery(query.id);
+                return;
+            }
+            
+            // Handle option selection
+            const optionIndex = parseInt(lastPart);
+            const selectedOption = question.options[optionIndex];
+            
+            if (!selectedOption) {
+                console.log('❌ Invalid option index:', optionIndex);
+                bot.answerCallbackQuery(query.id);
+                return;
+            }
+            
+            console.log(`✅ Option selected: ${questionKey} = ${selectedOption}`);
+            
             if (question.type === 'multiple') {
-                const selectedOptions = state.answers[questionKey] || [];
+                // Handle multiple choice
+                if (!state.answers[questionKey]) {
+                    state.answers[questionKey] = [];
+                }
+                
+                // Toggle selection
+                const currentAnswers = state.answers[questionKey];
+                const index = currentAnswers.indexOf(selectedOption);
+                
+                if (index > -1) {
+                    // Remove if already selected
+                    currentAnswers.splice(index, 1);
+                    console.log(`➖ Removed selection: ${selectedOption}`);
+                } else {
+                    // Add if not selected
+                    currentAnswers.push(selectedOption);
+                    console.log(`➕ Added selection: ${selectedOption}`);
+                }
+                
+                // Save state
+                state.answers[questionKey] = currentAnswers;
+                await state.save();
+                
+                // Re-ask the same question with updated selections
+                askProfilingQuestion(chatId);
+                
+            } else {
+                // Handle single choice
+                state.answers[questionKey] = selectedOption;
+                await state.save();
                 
                 bot.editMessageText(
-                    `✅ ${question.question}\n\nYour answers: ${selectedOptions.join(', ')}`,
+                    `✅ ${question.question}\n\nYour answer: ${selectedOption}`,
                     {
                         chat_id: chatId,
                         message_id: query.message.message_id
@@ -961,68 +1040,16 @@ bot.on('callback_query', (query) => {
                 
                 // Move to next question
                 state.currentQuestion++;
+                await state.save();
                 
                 setTimeout(() => {
                     askProfilingQuestion(chatId);
                 }, 1500);
             }
-            bot.answerCallbackQuery(query.id);
-            return;
-        }
-        
-        // Handle option selection
-        const optionIndex = parseInt(lastPart);
-        const selectedOption = question.options[optionIndex];
-        
-        if (!selectedOption) {
-            console.log('❌ Invalid option index:', optionIndex);
-            bot.answerCallbackQuery(query.id);
-            return;
-        }
-        
-        console.log(`✅ Option selected: ${questionKey} = ${selectedOption}`);
-        
-        if (question.type === 'multiple') {
-            // Handle multiple choice
-            if (!state.answers[questionKey]) {
-                state.answers[questionKey] = [];
-            }
             
-            // Toggle selection
-            const currentAnswers = state.answers[questionKey];
-            const index = currentAnswers.indexOf(selectedOption);
-            
-            if (index > -1) {
-                // Remove if already selected
-                currentAnswers.splice(index, 1);
-                console.log(`➖ Removed selection: ${selectedOption}`);
-            } else {
-                // Add if not selected
-                currentAnswers.push(selectedOption);
-                console.log(`➕ Added selection: ${selectedOption}`);
-            }
-            
-            // Re-ask the same question with updated selections
-            askProfilingQuestion(chatId);
-            
-        } else {
-            // Handle single choice
-            state.answers[questionKey] = selectedOption;
-            
-            bot.editMessageText(
-                `✅ ${question.question}\n\nYour answer: ${selectedOption}`,
-                {
-                    chat_id: chatId,
-                    message_id: query.message.message_id
-                }
-            );
-            
-            // Move to next question
-            state.currentQuestion++;
-            
-            setTimeout(() => {
-                askProfilingQuestion(chatId);
-            }, 1500);
+        } catch (error) {
+            console.error('❌ Error handling callback query:', error);
+            bot.sendMessage(chatId, 'Sorry, there was an error processing your selection. Please try again.');
         }
     }
     
@@ -1031,30 +1058,43 @@ bot.on('callback_query', (query) => {
     });
 });
 
-function completeUserProfile(chatId) {
-    const state = userProfilingStates[chatId];
-    const answers = state.answers;
-    
-    // Generate user persona
-    const persona = generateUserPersona(answers);
-    
-    // Update user in database
-    const userIndex = users.findIndex(u => u.telegramId === chatId);
-    if (userIndex !== -1) {
-        users[userIndex].profile = persona;
-        users[userIndex].profileCompleted = true;
-        users[userIndex].profileCompletedAt = new Date();
+async function completeUserProfile(chatId) {
+    try {
+        const state = await ProfilingState.findOne({ userId: chatId.toString() });
+        
+        if (!state) {
+            console.log('❌ No profiling state found for completion');
+            return;
+        }
+        
+        // Generate user persona
+        const persona = generateUserPersona(state.answers);
+        
+        // Update user in database
+        await User.findOneAndUpdate(
+            { telegramId: chatId.toString() },
+            { 
+                profile: persona,
+                profileAnswers: state.answers,
+                profileCompleted: true,
+                profileCompletedAt: new Date()
+            }
+        );
+        
+        // Send personalized completion message
+        const completionMessage = generateCompletionMessage(persona);
+        
+        bot.sendMessage(chatId, completionMessage);
+        
+        // Clean up profiling state
+        await ProfilingState.deleteOne({ userId: chatId.toString() });
+        
+        console.log(`🧠 Profile completed for user ${chatId}: ${persona.primaryProfile.label}`);
+        
+    } catch (error) {
+        console.error('❌ Error completing user profile:', error);
+        bot.sendMessage(chatId, 'Sorry, there was an error completing your profile. Please try again.');
     }
-    
-    // Send personalized completion message
-    const completionMessage = generateCompletionMessage(persona);
-    
-    bot.sendMessage(chatId, completionMessage);
-    
-    // Clean up profiling state
-    delete userProfilingStates[chatId];
-    
-    console.log(`🧠 Profile completed for user ${chatId}: ${persona.primaryProfile.label}`);
 }
 
 function generateUserPersona(answers) {
@@ -1534,12 +1574,23 @@ bot.on('polling_error', (error) => {
 });
 
 // Start our server
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on http://localhost:${PORT}`);
-    console.log(`🤖 Telegram bot is active and listening...`);
-    console.log(`👥 Total registered users: ${users.length}`);
-    console.log(`📱 Go to Telegram and message your bot to test it!`);
-    console.log(`🧠 Smart profiling enabled - users earn bonus for completing profiles!`);
+app.listen(PORT, async () => {
+    try {
+        const totalUsers = await User.countDocuments();
+        const activeCampaigns = await Campaign.countDocuments({ status: { $in: ['pending', 'active'] } });
+        
+        console.log(`🚀 Server running on http://localhost:${PORT}`);
+        console.log(`🤖 Telegram bot is active and listening...`);
+        console.log(`📊 Database: MongoDB connected`);
+        console.log(`👥 Total registered users: ${totalUsers}`);
+        console.log(`📱 Active campaigns: ${activeCampaigns}`);
+        console.log(`🧠 Smart profiling enabled - users earn bonus for completing profiles!`);
+    } catch (error) {
+        console.log(`🚀 Server running on http://localhost:${PORT}`);
+        console.log(`🤖 Telegram bot is active and listening...`);
+        console.log(`⚠️ Database connection status unknown`);
+        console.log(`📱 Go to Telegram and message your bot to test it!`);
+    }
 });
 
 // Handle server shutdown gracefully
