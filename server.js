@@ -1,27 +1,44 @@
-// server.js - Twitter Engagement Platform with Smart Profiling
+// server.js - Twitter Engagement Platform with MongoDB
 require('dotenv').config();
 const express = require('express');
+const mongoose = require('mongoose');
 const TelegramBot = require('node-telegram-bot-api');
+
+// Import database models
+const { User, Campaign, Assignment, Cooldown, ProfilingState, Analytics } = require('./models');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Get bot token from environment (try multiple ways)
+// Get environment variables
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/twitter-platform';
 
-// Debug: Log what we're getting
+// Debug: Log environment
 console.log('🔍 Environment check:');
 console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('PORT:', process.env.PORT);
 console.log('BOT_TOKEN exists:', !!BOT_TOKEN);
-console.log('BOT_TOKEN length:', BOT_TOKEN ? BOT_TOKEN.length : 0);
+console.log('MONGODB_URI exists:', !!MONGODB_URI);
 
 // Check if we have the bot token
 if (!BOT_TOKEN) {
     console.log('❌ ERROR: TELEGRAM_BOT_TOKEN not found in environment variables');
-    console.log('Available env vars:', Object.keys(process.env).filter(key => key.includes('TOKEN')));
     process.exit(1);
 }
+
+// Connect to MongoDB
+mongoose.connect(MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+.then(() => {
+    console.log('✅ Connected to MongoDB successfully');
+})
+.catch((error) => {
+    console.error('❌ MongoDB connection error:', error);
+    process.exit(1);
+});
 
 // Create Telegram bot
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
@@ -29,12 +46,12 @@ const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 // This lets our server understand JSON data
 app.use(express.json());
 
-// Store users in memory for now (later we'll use a database)
-let users = [];
-let campaigns = [];
-let assignments = [];
-let cooldowns = {}; // Track user cooldowns
-let userProfilingStates = {}; // Track profiling progress
+// Remove in-memory storage - we'll use MongoDB now
+// let users = [];
+// let campaigns = [];
+// let assignments = [];
+// let cooldowns = {};
+// let userProfilingStates = {};
 
 // Assignment system configuration
 const ASSIGNMENT_CONFIG = {
@@ -120,14 +137,26 @@ const PROFILING_QUESTIONS = {
 app.use(express.static('.'));
 
 // Web routes
-app.get('/', (req, res) => {
-    res.json({ 
-        message: 'Welcome to Twitter Engagement Platform with Smart Profiling!',
-        status: 'Server is running',
-        totalUsers: users.length,
-        activeCampaigns: campaigns.length,
-        completedProfiles: users.filter(u => u.profileCompleted).length
-    });
+app.get('/', async (req, res) => {
+    try {
+        const totalUsers = await User.countDocuments();
+        const activeCampaigns = await Campaign.countDocuments({ status: { $in: ['pending', 'active'] } });
+        const completedProfiles = await User.countDocuments({ profileCompleted: true });
+        
+        res.json({ 
+            message: 'Welcome to Twitter Engagement Platform with Smart Profiling!',
+            status: 'Server is running',
+            database: 'MongoDB connected',
+            totalUsers,
+            activeCampaigns,
+            completedProfiles
+        });
+    } catch (error) {
+        res.status(500).json({ 
+            message: 'Server running but database error',
+            error: error.message 
+        });
+    }
 });
 
 // Serve the dashboard
@@ -136,7 +165,7 @@ app.get('/dashboard', (req, res) => {
 });
 
 // API route to create campaigns
-app.post('/api/campaigns/create', (req, res) => {
+app.post('/api/campaigns/create', async (req, res) => {
     try {
         const campaignData = req.body;
         
@@ -149,17 +178,15 @@ app.post('/api/campaigns/create', (req, res) => {
         }
         
         // Create campaign object
-        const newCampaign = {
-            id: Date.now().toString(),
+        const newCampaign = new Campaign({
             ...campaignData,
             status: 'pending',
-            createdAt: new Date(),
             participants: [],
             totalEngagement: 0
-        };
+        });
         
-        // Add to campaigns array
-        campaigns.push(newCampaign);
+        // Save to database
+        await newCampaign.save();
         
         console.log(`✅ New campaign created: ${campaignData.brandName} (₦${campaignData.budget})`);
         
@@ -174,7 +201,7 @@ app.post('/api/campaigns/create', (req, res) => {
         res.json({
             success: true,
             message: 'Campaign created successfully!',
-            campaignId: newCampaign.id
+            campaignId: newCampaign._id
         });
         
     } catch (error) {
@@ -187,33 +214,51 @@ app.post('/api/campaigns/create', (req, res) => {
 });
 
 // Get all campaigns
-app.get('/api/campaigns', (req, res) => {
-    res.json({
-        success: true,
-        campaigns: campaigns.map(campaign => ({
-            id: campaign.id,
-            brandName: campaign.brandName,
-            description: campaign.description,
-            package: campaign.package,
-            budget: campaign.budget,
-            status: campaign.status,
-            estimatedParticipants: campaign.estimatedParticipants,
-            estimatedReach: campaign.estimatedReach,
-            createdAt: campaign.createdAt
-        }))
-    });
+app.get('/api/campaigns', async (req, res) => {
+    try {
+        const campaigns = await Campaign.find({}).sort({ createdAt: -1 });
+        
+        res.json({
+            success: true,
+            campaigns: campaigns.map(campaign => ({
+                id: campaign._id,
+                brandName: campaign.brandName,
+                description: campaign.description,
+                package: campaign.package,
+                budget: campaign.budget,
+                status: campaign.status,
+                estimatedParticipants: campaign.estimatedParticipants,
+                estimatedReach: campaign.estimatedReach,
+                createdAt: campaign.createdAt
+            }))
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            message: 'Failed to fetch campaigns'
+        });
+    }
 });
 
-app.get('/users', (req, res) => {
-    res.json({ 
-        message: 'Registered Users',
-        users: users.map(user => ({
-            name: user.firstName,
-            telegramId: user.telegramId,
-            profile: user.profileCompleted ? user.profile.primaryProfile.label : 'Not completed',
-            isActive: user.isActive || false
-        }))
-    });
+app.get('/users', async (req, res) => {
+    try {
+        const users = await User.find({}).sort({ registeredAt: -1 });
+        
+        res.json({ 
+            message: 'Registered Users',
+            users: users.map(user => ({
+                name: user.firstName,
+                telegramId: user.telegramId,
+                profile: user.profileCompleted ? user.profile.primaryProfile.label : 'Not completed',
+                isActive: user.isActive || false
+            }))
+        });
+    } catch (error) {
+        res.status(500).json({
+            message: 'Failed to fetch users',
+            error: error.message
+        });
+    }
 });
 
 // Smart Assignment System (Inclusive Approach)
@@ -645,44 +690,49 @@ function formatNumber(num) {
 // Telegram Bot Commands
 
 // /start command - Register new user
-bot.onText(/\/start/, (msg) => {
+bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const user = msg.from;
     
-    // Check if user already exists
-    const existingUser = users.find(u => u.telegramId === chatId);
-    
-    if (existingUser) {
-        bot.sendMessage(chatId, `Welcome back, ${user.first_name}! 👋\n\nUse /help to see available commands.`);
-        return;
+    try {
+        // Check if user already exists
+        const existingUser = await User.findOne({ telegramId: chatId.toString() });
+        
+        if (existingUser) {
+            bot.sendMessage(chatId, `Welcome back, ${user.first_name}! 👋\n\nUse /help to see available commands.`);
+            return;
+        }
+        
+        // Create new user
+        const newUser = new User({
+            telegramId: chatId.toString(),
+            firstName: user.first_name,
+            lastName: user.last_name || '',
+            username: user.username || '',
+            isActive: true,
+            earnings: 0,
+            campaignsCompleted: 0,
+            profileCompleted: false
+        });
+        
+        await newUser.save();
+        
+        bot.sendMessage(chatId, 
+            `🎉 Welcome to Twitter Engagement Platform, ${user.first_name}!\n\n` +
+            `You're now registered and ready to earn money from Twitter engagement!\n\n` +
+            `📱 Next steps:\n` +
+            `1. Link your Twitter account with /twitter\n` +
+            `2. Complete your smart profile (2 minutes)\n` +
+            `3. Get matched with perfect campaigns!\n\n` +
+            `💰 Users with completed profiles earn 20% more!`
+        );
+        
+        console.log(`✅ New user registered: ${user.first_name} (${chatId})`);
+        
+    } catch (error) {
+        console.error('❌ Error registering user:', error);
+        bot.sendMessage(chatId, 'Sorry, there was an error registering you. Please try again.');
     }
-    
-    // Add new user
-    const newUser = {
-        telegramId: chatId,
-        firstName: user.first_name,
-        lastName: user.last_name || '',
-        username: user.username || '',
-        registeredAt: new Date(),
-        isActive: true,
-        earnings: 0,
-        campaigns: 0,
-        profileCompleted: false
-    };
-    
-    users.push(newUser);
-    
-    bot.sendMessage(chatId, 
-        `🎉 Welcome to Twitter Engagement Platform, ${user.first_name}!\n\n` +
-        `You're now registered and ready to earn money from Twitter engagement!\n\n` +
-        `📱 Next steps:\n` +
-        `1. Link your Twitter account with /twitter\n` +
-        `2. Complete your smart profile (2 minutes)\n` +
-        `3. Get matched with perfect campaigns!\n\n` +
-        `💰 Users with completed profiles earn 20% more!`
-    );
-    
-    console.log(`✅ New user registered: ${user.first_name} (${chatId})`);
 });
 
 // /help command
@@ -709,7 +759,7 @@ bot.onText(/\/help/, (msg) => {
 });
 
 // /twitter command with optional profiling
-bot.onText(/\/twitter/, (msg) => {
+bot.onText(/\/twitter/, async (msg) => {
     const chatId = msg.chat.id;
     
     bot.sendMessage(chatId, 
@@ -721,45 +771,56 @@ bot.onText(/\/twitter/, (msg) => {
     );
     
     // Wait for next message from this user
-    bot.once('message', (response) => {
+    bot.once('message', async (response) => {
         if (response.chat.id === chatId && !response.text.startsWith('/')) {
-            const twitterHandle = response.text.trim().replace('@', '');
-            
-            // Update user with Twitter handle
-            const userIndex = users.findIndex(u => u.telegramId === chatId);
-            if (userIndex !== -1) {
-                users[userIndex].twitterHandle = twitterHandle;
+            try {
+                const twitterHandle = response.text.trim().replace('@', '');
                 
-                bot.sendMessage(chatId, 
-                    `✅ Twitter account linked: @${twitterHandle}\n\n` +
-                    `🎉 You're now ready to participate in campaigns!\n\n` +
-                    `💡 Optional: Complete a 2-minute profile for 15-25% bonus earnings!\n\n` +
-                    `Reply "yes" to start the profile, or use /campaigns to see available opportunities.`
+                // Update user with Twitter handle
+                const user = await User.findOneAndUpdate(
+                    { telegramId: chatId.toString() },
+                    { twitterHandle: twitterHandle },
+                    { new: true }
                 );
                 
-                // Wait for profile decision
-                bot.once('message', (profileResponse) => {
-                    if (profileResponse.chat.id === chatId && 
-                        profileResponse.text.toLowerCase().includes('yes')) {
-                        
-                        bot.sendMessage(chatId, 
-                            `🧠 Great! Let's create your smart profile for bonus earnings!\n\n` +
-                            `This helps us match you with campaigns you'll actually enjoy.`
-                        );
-                        
-                        setTimeout(() => {
-                            startSmartProfiling(chatId);
-                        }, 2000);
-                    } else {
-                        bot.sendMessage(chatId, 
-                            `✅ No problem! You're all set to participate in campaigns.\n\n` +
-                            `Use /campaigns to see available opportunities.\n` +
-                            `You can complete your profile anytime with /profile for bonus earnings!`
-                        );
-                    }
-                });
+                if (user) {
+                    bot.sendMessage(chatId, 
+                        `✅ Twitter account linked: @${twitterHandle}\n\n` +
+                        `🎉 You're now ready to participate in campaigns!\n\n` +
+                        `💡 Optional: Complete a 2-minute profile for 15-25% bonus earnings!\n\n` +
+                        `Reply "yes" to start the profile, or use /campaigns to see available opportunities.`
+                    );
+                    
+                    // Wait for profile decision
+                    bot.once('message', async (profileResponse) => {
+                        if (profileResponse.chat.id === chatId && 
+                            profileResponse.text.toLowerCase().includes('yes')) {
+                            
+                            bot.sendMessage(chatId, 
+                                `🧠 Great! Let's create your smart profile for bonus earnings!\n\n` +
+                                `This helps us match you with campaigns you'll actually enjoy.`
+                            );
+                            
+                            setTimeout(() => {
+                                startSmartProfiling(chatId);
+                            }, 2000);
+                        } else {
+                            bot.sendMessage(chatId, 
+                                `✅ No problem! You're all set to participate in campaigns.\n\n` +
+                                `Use /campaigns to see available opportunities.\n` +
+                                `You can complete your profile anytime with /profile for bonus earnings!`
+                            );
+                        }
+                    });
+                    
+                    console.log(`📱 User ${user.firstName} linked Twitter: @${twitterHandle}`);
+                } else {
+                    bot.sendMessage(chatId, 'User not found. Please register first with /start');
+                }
                 
-                console.log(`📱 User ${users[userIndex].firstName} linked Twitter: @${twitterHandle}`);
+            } catch (error) {
+                console.error('❌ Error linking Twitter:', error);
+                bot.sendMessage(chatId, 'Sorry, there was an error linking your Twitter account. Please try again.');
             }
         }
     });
