@@ -6,12 +6,20 @@ const TelegramBot = require('node-telegram-bot-api');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Get bot token from environment file
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+// Get bot token from environment (try multiple ways)
+const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
+
+// Debug: Log what we're getting (remove in production)
+console.log('🔍 Environment check:');
+console.log('NODE_ENV:', process.env.NODE_ENV);
+console.log('PORT:', process.env.PORT);
+console.log('BOT_TOKEN exists:', !!BOT_TOKEN);
+console.log('BOT_TOKEN length:', BOT_TOKEN ? BOT_TOKEN.length : 0);
 
 // Check if we have the bot token
 if (!BOT_TOKEN) {
-    console.log('❌ ERROR: Please add your TELEGRAM_BOT_TOKEN to the .env file');
+    console.log('❌ ERROR: TELEGRAM_BOT_TOKEN not found in environment variables');
+    console.log('Available env vars:', Object.keys(process.env).filter(key => key.includes('TOKEN')));
     process.exit(1);
 }
 
