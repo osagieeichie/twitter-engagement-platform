@@ -948,16 +948,32 @@ async function waitForCleanBioVerification(chatId, twitterHandle, verificationCo
 }
 
 async function checkCleanBioVerification(chatId, twitterHandle, verificationCode) {
-    bot.sendMessage(chatId, '🔍 Checking your Twitter bio for the verification code...');
-    
     try {
+        bot.sendMessage(chatId, '🔍 Checking your Twitter bio for the verification code...');
+        
+        console.log(`🔍 Starting verification for ${twitterHandle} with code ${verificationCode}`);
+        
         // Check if verification is still valid
         const user = await User.findOne({ 
             telegramId: chatId.toString(),
             verificationCode: verificationCode
         });
         
-        if (!user || new Date() > user.verificationExpires) {
+        console.log(`👤 User found:`, !!user);
+        console.log(`⏰ Verification expires:`, user?.verificationExpires);
+        console.log(`🕐 Current time:`, new Date());
+        
+        if (!user) {
+            console.log('❌ No user found with verification code');
+            bot.sendMessage(chatId, 
+                `❌ Verification session not found.\n\n` +
+                `Please start over with /twitter`
+            );
+            return;
+        }
+        
+        if (new Date() > user.verificationExpires) {
+            console.log('❌ Verification expired');
             bot.sendMessage(chatId, 
                 `⏰ Verification Expired\n\n` +
                 `Your verification session has expired.\n` +
@@ -966,20 +982,29 @@ async function checkCleanBioVerification(chatId, twitterHandle, verificationCode
             return;
         }
         
+        console.log('✅ Verification is valid, checking bio...');
+        
         // Simulate bio verification check
         const isVerified = await simulateBioVerification(twitterHandle, verificationCode);
         
+        console.log(`📋 Bio verification result:`, isVerified);
+        
         if (isVerified) {
+            console.log('✅ Verification successful, updating user...');
+            
             // Mark user as verified
-            await User.findOneAndUpdate(
+            const updatedUser = await User.findOneAndUpdate(
                 { telegramId: chatId.toString() },
                 { 
                     twitterVerified: true,
                     verificationCode: null,
                     verificationExpires: null,
                     verifiedAt: new Date()
-                }
+                },
+                { new: true }
             );
+            
+            console.log('✅ User updated successfully:', !!updatedUser);
             
             bot.sendMessage(chatId, 
                 `🎉 Twitter Account Verified Successfully!\n\n` +
@@ -994,6 +1019,7 @@ async function checkCleanBioVerification(chatId, twitterHandle, verificationCode
             console.log(`✅ Twitter verified: @${twitterHandle} for user ${chatId}`);
             
         } else {
+            console.log('❌ Bio verification failed');
             bot.sendMessage(chatId, 
                 `❌ Verification Failed\n\n` +
                 `We couldn't find the code "${verificationCode}" in @${twitterHandle}'s bio.\n\n` +
@@ -1007,11 +1033,13 @@ async function checkCleanBioVerification(chatId, twitterHandle, verificationCode
         }
         
     } catch (error) {
-        console.error('❌ Error checking verification:', error);
+        console.error('❌ Error in checkCleanBioVerification:', error);
+        console.error('❌ Error stack:', error.stack);
+        
         bot.sendMessage(chatId, 
             `⚠️ Verification Error\n\n` +
-            `There was an error checking your verification.\n` +
-            `Please try again in a few minutes or contact support.`
+            `There was a technical error: ${error.message}\n\n` +
+            `Please try again with /twitter or contact support.`
         );
     }
 }
