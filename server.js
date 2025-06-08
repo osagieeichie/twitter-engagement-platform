@@ -12,14 +12,15 @@ const PORT = process.env.PORT || 3000;
 
 // Get environment variables
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.BOT_TOKEN;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://localhost:27017/twitter-platform';
+const MONGODB_URI = process.env.MONGO_URL || process.env.MONGODB_URI || 'mongodb://localhost:27017/twitter-platform';
 
 // Debug: Log environment
 console.log('🔍 Environment check:');
 console.log('NODE_ENV:', process.env.NODE_ENV);
 console.log('PORT:', process.env.PORT);
 console.log('BOT_TOKEN exists:', !!BOT_TOKEN);
-console.log('MONGODB_URI exists:', !!MONGODB_URI);
+console.log('MONGO_URL exists:', !!process.env.MONGO_URL);
+console.log('MONGODB_URI exists:', !!process.env.MONGODB_URI);
 
 // Check if we have the bot token
 if (!BOT_TOKEN) {
