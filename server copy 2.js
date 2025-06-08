@@ -55,7 +55,6 @@ const ASSIGNMENT_CONFIG = {
 const PROFILING_QUESTIONS = {
     age_range: {
         question: "What's your age range? (This helps us match you with relevant campaigns)",
-        type: "single",
         options: [
             "16-20 📱",
             "21-25 🎓", 
@@ -66,8 +65,7 @@ const PROFILING_QUESTIONS = {
         ]
     },
     daily_routine: {
-        question: "What best describes your typical weekday? (Select all that apply)",
-        type: "multiple",
+        question: "What best describes your typical weekday?",
         options: [
             "Classes and campus life 📚",
             "Office work and meetings 💼", 
@@ -79,7 +77,6 @@ const PROFILING_QUESTIONS = {
     },
     spending_priority: {
         question: "When you have extra money, what do you typically spend it on first?",
-        type: "single",
         options: [
             "Latest gadgets and tech 📱",
             "Fashion and looking good 👗",
@@ -92,7 +89,6 @@ const PROFILING_QUESTIONS = {
     },
     influence_style: {
         question: "When you recommend something on social media, it's usually because:",
-        type: "single",
         options: [
             "I genuinely love it and want to share 💝",
             "It solved a real problem for me 🔧", 
@@ -103,8 +99,7 @@ const PROFILING_QUESTIONS = {
         ]
     },
     discovery_style: {
-        question: "How do you typically discover new products/services? (Select all that apply)",
-        type: "multiple",
+        question: "How do you typically discover new products/services?",
         options: [
             "Through friends and people I trust 👥",
             "Social media ads and influencers 📺",
@@ -788,6 +783,7 @@ function askProfilingQuestion(chatId) {
     
     if (!state) {
         console.log(`❌ No state found for user ${chatId}, restarting profiling`);
+        // Restart profiling if state was lost
         startSmartProfiling(chatId);
         return;
     }
@@ -796,6 +792,7 @@ function askProfilingQuestion(chatId) {
     const question = PROFILING_QUESTIONS[questionKey];
     
     if (!question) {
+        // Profiling complete
         completeUserProfile(chatId);
         return;
     }
@@ -803,73 +800,52 @@ function askProfilingQuestion(chatId) {
     const questionNumber = state.currentQuestion + 1;
     const totalQuestions = state.questionOrder.length;
     
-    console.log(`❓ Asking question ${questionNumber}/${totalQuestions} to user ${chatId}: ${questionKey}`);
+    console.log(`❓ Asking question ${questionNumber}/${totalQuestions} to user ${chatId}: ${questionKey}`); // Debug line
     
     let message = `📊 Profile Question ${questionNumber}/${totalQuestions}\n\n`;
     message += `${question.question}\n\n`;
     
-    // Initialize answers array for multiple choice questions
-    if (question.type === 'multiple' && !state.answers[questionKey]) {
-        state.answers[questionKey] = [];
-    }
-    
     // Create inline keyboard with options
-    const keyboard = question.options.map((option, index) => {
-        let text = `${index + 1}. ${option}`;
-        
-        // Add checkmark for multiple choice if already selected
-        if (question.type === 'multiple' && state.answers[questionKey] && state.answers[questionKey].includes(option)) {
-            text = `✅ ${text}`;
-        }
-        
-        return [{ text: text, callback_data: `profile_${questionKey}_${index}` }];
-    });
-    
-    // Add "Done" button for multiple choice questions
-    if (question.type === 'multiple') {
-        const selectedCount = state.answers[questionKey] ? state.answers[questionKey].length : 0;
-        if (selectedCount > 0) {
-            keyboard.push([{ 
-                text: `✅ Done (${selectedCount} selected)`, 
-                callback_data: `profile_${questionKey}_done` 
-            }]);
-        }
-        message += `💡 You can select multiple options. Tap "Done" when finished.`;
-    }
+    const keyboard = question.options.map((option, index) => [
+        { text: `${index + 1}. ${option}`, callback_data: `profile_${questionKey}_${index}` }
+    ]);
     
     bot.sendMessage(chatId, message, {
         reply_markup: {
             inline_keyboard: keyboard
         }
     }).then(() => {
-        console.log(`✅ Question sent successfully to ${chatId}`);
+        console.log(`✅ Question sent successfully to ${chatId}`); // Debug line
     }).catch(error => {
-        console.log(`❌ Failed to send question to ${chatId}:`, error.message);
+        console.log(`❌ Failed to send question to ${chatId}:`, error.message); // Debug line
     });
 }
 
 // Handle profiling answers
 bot.on('callback_query', (query) => {
-    console.log('🔍 Callback query received:', query.data);
+    console.log('🔍 Callback query received:', query.data); // Debug line
     
     const chatId = query.message.chat.id;
     const data = query.data;
     
     if (data.startsWith('profile_')) {
-        console.log('📊 Processing profile callback:', data);
+        console.log('📊 Processing profile callback:', data); // Debug line
         
-        // Parse callback data
+        // Fix: Better parsing for callback data
         const parts = data.split('_');
-        const lastPart = parts.pop(); // Could be option index or 'done'
-        parts.shift(); // Remove 'profile'
-        const questionKey = parts.join('_');
+        const optionIndex = parts.pop(); // Last part is the option index
+        parts.shift(); // Remove 'profile' from the beginning
+        const questionKey = parts.join('_'); // Rejoin the rest as question key
         
-        console.log('🔍 Parsed questionKey:', questionKey, 'action:', lastPart);
+        console.log('🔍 Parsed questionKey:', questionKey, 'optionIndex:', optionIndex); // Debug line
         
         let state = userProfilingStates[chatId];
         
+        console.log('👤 User state exists:', !!state); // Debug line
+        console.log('📋 All active states:', Object.keys(userProfilingStates)); // Debug line
+        
         if (!state) {
-            console.log('❌ State lost, sending restart message');
+            console.log('❌ State lost, sending restart message'); // Debug line
             bot.sendMessage(chatId, 
                 `🔄 Sorry! Your session was interrupted.\n\n` +
                 `Let's restart your profile. Use /profile to begin again.`
@@ -881,90 +857,41 @@ bot.on('callback_query', (query) => {
         const question = PROFILING_QUESTIONS[questionKey];
         if (!question) {
             console.log('❌ Invalid question key:', questionKey);
+            console.log('📋 Available question keys:', Object.keys(PROFILING_QUESTIONS)); // Debug line
             bot.answerCallbackQuery(query.id);
             return;
         }
         
-        // Handle "Done" for multiple choice
-        if (lastPart === 'done') {
-            if (question.type === 'multiple') {
-                const selectedOptions = state.answers[questionKey] || [];
-                
-                bot.editMessageText(
-                    `✅ ${question.question}\n\nYour answers: ${selectedOptions.join(', ')}`,
-                    {
-                        chat_id: chatId,
-                        message_id: query.message.message_id
-                    }
-                );
-                
-                // Move to next question
-                state.currentQuestion++;
-                
-                setTimeout(() => {
-                    askProfilingQuestion(chatId);
-                }, 1500);
+        const selectedOption = question.options[parseInt(optionIndex)];
+        
+        console.log(`✅ Answer recorded: ${questionKey} = ${selectedOption}`); // Debug line
+        
+        // Store answer
+        state.answers[questionKey] = selectedOption;
+        
+        // Acknowledge selection
+        bot.editMessageText(
+            `✅ ${question.question}\n\nYour answer: ${selectedOption}`,
+            {
+                chat_id: chatId,
+                message_id: query.message.message_id
             }
-            bot.answerCallbackQuery(query.id);
-            return;
-        }
+        ).then(() => {
+            console.log('📝 Message edited successfully'); // Debug line
+        }).catch(error => {
+            console.log('❌ Edit message error:', error.message); // Debug line
+        });
         
-        // Handle option selection
-        const optionIndex = parseInt(lastPart);
-        const selectedOption = question.options[optionIndex];
+        // Move to next question
+        state.currentQuestion++;
         
-        if (!selectedOption) {
-            console.log('❌ Invalid option index:', optionIndex);
-            bot.answerCallbackQuery(query.id);
-            return;
-        }
-        
-        console.log(`✅ Option selected: ${questionKey} = ${selectedOption}`);
-        
-        if (question.type === 'multiple') {
-            // Handle multiple choice
-            if (!state.answers[questionKey]) {
-                state.answers[questionKey] = [];
-            }
-            
-            // Toggle selection
-            const currentAnswers = state.answers[questionKey];
-            const index = currentAnswers.indexOf(selectedOption);
-            
-            if (index > -1) {
-                // Remove if already selected
-                currentAnswers.splice(index, 1);
-                console.log(`➖ Removed selection: ${selectedOption}`);
-            } else {
-                // Add if not selected
-                currentAnswers.push(selectedOption);
-                console.log(`➕ Added selection: ${selectedOption}`);
-            }
-            
-            // Re-ask the same question with updated selections
+        setTimeout(() => {
+            console.log(`➡️ Moving to question ${state.currentQuestion + 1}`); // Debug line
             askProfilingQuestion(chatId);
-            
-        } else {
-            // Handle single choice
-            state.answers[questionKey] = selectedOption;
-            
-            bot.editMessageText(
-                `✅ ${question.question}\n\nYour answer: ${selectedOption}`,
-                {
-                    chat_id: chatId,
-                    message_id: query.message.message_id
-                }
-            );
-            
-            // Move to next question
-            state.currentQuestion++;
-            
-            setTimeout(() => {
-                askProfilingQuestion(chatId);
-            }, 1500);
-        }
+        }, 1500);
     }
     
+    // Always answer callback query to remove loading state
     bot.answerCallbackQuery(query.id).catch(error => {
         console.log('❌ Answer callback query error:', error.message);
     });
@@ -1011,15 +938,12 @@ function generateUserPersona(answers) {
 }
 
 function determineProfile(answers) {
-    const routine = answers.daily_routine || [];
+    const routine = answers.daily_routine || "";
     const spending = answers.spending_priority || "";
     const influence = answers.influence_style || "";
     
-    // Convert routine to string for easier checking (handle both array and string)
-    const routineStr = Array.isArray(routine) ? routine.join(' ') : routine;
-    
-    // Smart profile matching with multiple selections
-    if (routineStr.includes("Classes") && spending.includes("gadgets")) {
+    // Smart profile matching
+    if (routine.includes("Classes") && spending.includes("gadgets")) {
         return {
             label: "Tech-Savvy Student",
             description: "University students passionate about technology and gadgets",
@@ -1028,7 +952,7 @@ function determineProfile(answers) {
         };
     }
     
-    if (routineStr.includes("Classes") && spending.includes("Basic needs")) {
+    if (routine.includes("Classes") && spending.includes("Basic needs")) {
         return {
             label: "Budget-Smart Student",
             description: "Students who prioritize value and affordability", 
@@ -1037,16 +961,7 @@ function determineProfile(answers) {
         };
     }
     
-    if (routineStr.includes("business") && routineStr.includes("Creative")) {
-        return {
-            label: "Creative Entrepreneur",
-            description: "Creative professionals running their own business",
-            bestFor: ["creative_tools", "business_services", "artistic_products"],
-            authenticityLevel: "very_high"
-        };
-    }
-    
-    if (routineStr.includes("Office") && spending.includes("Fashion")) {
+    if (routine.includes("Office") && spending.includes("Fashion")) {
         return {
             label: "Style-Conscious Professional",
             description: "Young professionals who care about image and status",
@@ -1055,7 +970,7 @@ function determineProfile(answers) {
         };
     }
     
-    if (routineStr.includes("business") && spending.includes("Skills")) {
+    if (routine.includes("business") && spending.includes("Skills")) {
         return {
             label: "Growth-Focused Entrepreneur", 
             description: "Business-minded individuals focused on growth and learning",
@@ -1064,7 +979,7 @@ function determineProfile(answers) {
         };
     }
     
-    if (routineStr.includes("Creative") && influence.includes("genuinely love")) {
+    if (routine.includes("Creative") && influence.includes("genuinely love")) {
         return {
             label: "Passionate Creative",
             description: "Artists and creators who genuinely love what they share",
@@ -1073,30 +988,12 @@ function determineProfile(answers) {
         };
     }
     
-    if (routineStr.includes("Job hunting") && influence.includes("value for money")) {
+    if (routine.includes("Job hunting") && influence.includes("value for money")) {
         return {
             label: "Honest Value Advisor",
             description: "Job seekers who give very honest opinions about value",
             bestFor: ["affordable_products", "job_services", "skill_development"],
             authenticityLevel: "very_high"
-        };
-    }
-    
-    if (routineStr.includes("Classes") && routineStr.includes("Job hunting")) {
-        return {
-            label: "Ambitious Student",
-            description: "Students actively preparing for their career",
-            bestFor: ["educational_services", "career_tools", "skill_development"],
-            authenticityLevel: "very_high"
-        };
-    }
-    
-    if (routineStr.includes("Office") && routineStr.includes("Creative")) {
-        return {
-            label: "Creative Professional",
-            description: "Working professionals with creative side projects",
-            bestFor: ["creative_tools", "productivity_apps", "lifestyle_brands"],
-            authenticityLevel: "high"
         };
     }
     
