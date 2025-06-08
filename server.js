@@ -27,17 +27,27 @@ if (!BOT_TOKEN) {
     process.exit(1);
 }
 
-// Connect to MongoDB
-mongoose.connect(MONGODB_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-})
+// Connect to Railway MongoDB (much simpler)
+mongoose.connect(MONGODB_URI)
 .then(() => {
-    console.log('✅ Connected to MongoDB successfully');
+    console.log('✅ Connected to Railway MongoDB successfully');
 })
 .catch((error) => {
-    console.error('❌ MongoDB connection error:', error);
-    process.exit(1);
+    console.error('❌ MongoDB connection error:', error.message);
+    console.log('🔄 Server will continue - please check Railway MongoDB service');
+});
+
+// Handle connection events
+mongoose.connection.on('error', (error) => {
+    console.error('❌ MongoDB error:', error.message);
+});
+
+mongoose.connection.on('disconnected', () => {
+    console.log('⚠️ MongoDB disconnected');
+});
+
+mongoose.connection.on('connected', () => {
+    console.log('✅ MongoDB connected');
 });
 
 // Create Telegram bot
