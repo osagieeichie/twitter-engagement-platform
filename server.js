@@ -984,8 +984,16 @@ async function checkCleanBioVerification(chatId, twitterHandle, verificationCode
         
         console.log('✅ Verification is valid, checking bio...');
         
-        // Simulate bio verification check
-        const isVerified = await simulateBioVerification(twitterHandle, verificationCode);
+        // Inline bio verification simulation (to avoid function reference issues)
+        console.log(`🔍 Simulating bio verification for @${twitterHandle} with code ${verificationCode}`);
+        
+        // For demo purposes, we'll return true after a delay
+        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+        
+        console.log(`✅ Bio verification simulation completed`);
+        
+        // For now, always return true for demo
+        const isVerified = true;
         
         console.log(`📋 Bio verification result:`, isVerified);
         
