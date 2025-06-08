@@ -802,16 +802,24 @@ function askProfilingQuestion(chatId) {
 
 // Handle profiling answers
 bot.on('callback_query', (query) => {
+    console.log('🔍 Callback query received:', query.data); // Debug line
+    
     const chatId = query.message.chat.id;
     const data = query.data;
     
     if (data.startsWith('profile_')) {
+        console.log('📊 Processing profile callback:', data); // Debug line
+        
         const [, questionKey, optionIndex] = data.split('_');
         const state = userProfilingStates[chatId];
+        
+        console.log('👤 User state exists:', !!state); // Debug line
         
         if (state) {
             const question = PROFILING_QUESTIONS[questionKey];
             const selectedOption = question.options[parseInt(optionIndex)];
+            
+            console.log(`✅ Answer recorded: ${questionKey} = ${selectedOption}`); // Debug line
             
             // Store answer
             state.answers[questionKey] = selectedOption;
@@ -823,18 +831,28 @@ bot.on('callback_query', (query) => {
                     chat_id: chatId,
                     message_id: query.message.message_id
                 }
-            );
+            ).then(() => {
+                console.log('📝 Message edited successfully'); // Debug line
+            }).catch(error => {
+                console.log('❌ Edit message error:', error.message); // Debug line
+            });
             
             // Move to next question
             state.currentQuestion++;
             
             setTimeout(() => {
+                console.log(`➡️ Moving to question ${state.currentQuestion + 1}`); // Debug line
                 askProfilingQuestion(chatId);
             }, 1500);
+        } else {
+            console.log('❌ No profiling state found for user:', chatId); // Debug line
         }
     }
     
-    bot.answerCallbackQuery(query.id);
+    // Always answer callback query to remove loading state
+    bot.answerCallbackQuery(query.id).catch(error => {
+        console.log('❌ Answer callback query error:', error.message);
+    });
 });
 
 function completeUserProfile(chatId) {
