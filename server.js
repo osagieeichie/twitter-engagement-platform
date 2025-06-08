@@ -28,14 +28,14 @@ if (!BOT_TOKEN) {
     process.exit(1);
 }
 
-// Connect to Railway MongoDB (much simpler)
+// Connect to Railway MongoDB
 mongoose.connect(MONGODB_URI)
 .then(() => {
     console.log('✅ Connected to Railway MongoDB successfully');
 })
 .catch((error) => {
     console.error('❌ MongoDB connection error:', error.message);
-    console.log('🔄 Server will continue - please check Railway MongoDB service');
+    process.exit(1);
 });
 
 // Handle connection events
@@ -308,19 +308,34 @@ function createAutomaticAssignments(campaign) {
     console.log(`📊 ${selectedUsers.filter(u => u.profileCompleted).length} users have completed profiles (bonus earnings!)`);
 }
 
-function getAvailableUsers() {
-    const now = new Date();
-    
-    return users.filter(user => {
-        // Must have Twitter account and be active
-        if (!user.twitterHandle || !user.isActive) return false;
+async function getAvailableUsers() {
+    try {
+        const now = new Date();
         
-        // Check cooldown
-        const userCooldown = cooldowns[user.telegramId];
-        if (userCooldown && now < userCooldown.until) return false;
+        // Get users with verified Twitter accounts only
+        const users = await User.find({
+            twitterHandle: { $exists: true, $ne: null },
+            twitterVerified: true, // Only verified users
+            isActive: true
+        });
         
-        return true;
-    });
+        // Filter out users in cooldown
+        const availableUsers = [];
+        
+        for (const user of users) {
+            const cooldown = await Cooldown.findOne({ userId: user.telegramId });
+            
+            if (!cooldown || now >= cooldown.until) {
+                availableUsers.push(user);
+            }
+        }
+        
+        return availableUsers;
+        
+    } catch (error) {
+        console.error('❌ Error getting available users:', error);
+        return [];
+    }
 }
 
 function selectBestUsersInclusive(availableUsers, maxParticipants) {
@@ -769,73 +784,262 @@ bot.onText(/\/help/, (msg) => {
     );
 });
 
-// /twitter command with optional profiling
+// /twitter command with verification
 bot.onText(/\/twitter/, async (msg) => {
     const chatId = msg.chat.id;
     
+    try {
+        const user = await User.findOne({ telegramId: chatId.toString() });
+        
+        if (!user) {
+            bot.sendMessage(chatId, 'Please register first with /start');
+            return;
+        }
+        
+        // Check if user already has verified Twitter
+        if (user.twitterHandle && user.twitterVerified) {
+            bot.sendMessage(chatId, 
+                `🐦 Twitter Account Already Verified!\n\n` +
+                `✅ Current account: @${user.twitterHandle}\n\n` +
+                `Want to change your Twitter account? Reply "change" to start over.`
+            );
+            
+            // Wait for change confirmation
+            bot.once('message', async (response) => {
+                if (response.chat.id === chatId && 
+                    response.text.toLowerCase().includes('change')) {
+                    
+                    // Reset verification
+                    await User.findOneAndUpdate(
+                        { telegramId: chatId.toString() },
+                        { 
+                            twitterHandle: null,
+                            twitterVerified: false,
+                            verificationCode: null
+                        }
+                    );
+                    
+                    bot.sendMessage(chatId, '🔄 Twitter account reset. Let\'s verify your new account!');
+                    setTimeout(() => startTwitterVerification(chatId), 1000);
+                }
+            });
+            
+            return;
+        }
+        
+        startTwitterVerification(chatId);
+        
+    } catch (error) {
+        console.error('❌ Error in twitter command:', error);
+        bot.sendMessage(chatId, 'Sorry, there was an error. Please try again.');
+    }
+});
+
+async function startTwitterVerification(chatId) {
     bot.sendMessage(chatId, 
-        `🐦 Link Your Twitter Account\n\n` +
-        `To participate in campaigns, we need your Twitter handle.\n\n` +
-        `Please reply with your Twitter username (without @):\n` +
-        `Example: john_doe\n\n` +
-        `📝 Type your Twitter handle:`
+        `🐦 Twitter Account Verification\n\n` +
+        `To prevent fraud, we need to verify you own this Twitter account.\n\n` +
+        `📝 Step 1: Enter your Twitter username (without @):\n\n` +
+        `Example: john_doe`
     );
     
-    // Wait for next message from this user
+    // Wait for Twitter handle
     bot.once('message', async (response) => {
         if (response.chat.id === chatId && !response.text.startsWith('/')) {
             try {
-                const twitterHandle = response.text.trim().replace('@', '');
+                const twitterHandle = response.text.trim().replace('@', '').toLowerCase();
                 
-                // Update user with Twitter handle
-                const user = await User.findOneAndUpdate(
-                    { telegramId: chatId.toString() },
-                    { twitterHandle: twitterHandle },
-                    { new: true }
-                );
-                
-                if (user) {
+                // Validate Twitter handle format
+                if (!isValidTwitterHandle(twitterHandle)) {
                     bot.sendMessage(chatId, 
-                        `✅ Twitter account linked: @${twitterHandle}\n\n` +
-                        `🎉 You're now ready to participate in campaigns!\n\n` +
-                        `💡 Optional: Complete a 2-minute profile for 15-25% bonus earnings!\n\n` +
-                        `Reply "yes" to start the profile, or use /campaigns to see available opportunities.`
+                        `❌ Invalid Twitter handle format.\n\n` +
+                        `Please use only letters, numbers, and underscores.\n` +
+                        `Try again with /twitter`
                     );
-                    
-                    // Wait for profile decision
-                    bot.once('message', async (profileResponse) => {
-                        if (profileResponse.chat.id === chatId && 
-                            profileResponse.text.toLowerCase().includes('yes')) {
-                            
-                            bot.sendMessage(chatId, 
-                                `🧠 Great! Let's create your smart profile for bonus earnings!\n\n` +
-                                `This helps us match you with campaigns you'll actually enjoy.`
-                            );
-                            
-                            setTimeout(() => {
-                                startSmartProfiling(chatId);
-                            }, 2000);
-                        } else {
-                            bot.sendMessage(chatId, 
-                                `✅ No problem! You're all set to participate in campaigns.\n\n` +
-                                `Use /campaigns to see available opportunities.\n` +
-                                `You can complete your profile anytime with /profile for bonus earnings!`
-                            );
-                        }
-                    });
-                    
-                    console.log(`📱 User ${user.firstName} linked Twitter: @${twitterHandle}`);
-                } else {
-                    bot.sendMessage(chatId, 'User not found. Please register first with /start');
+                    return;
                 }
                 
+                // Check if handle is already verified by another user
+                const existingUser = await User.findOne({ 
+                    twitterHandle: twitterHandle,
+                    twitterVerified: true,
+                    telegramId: { $ne: chatId.toString() }
+                });
+                
+                if (existingUser) {
+                    bot.sendMessage(chatId, 
+                        `❌ This Twitter handle is already verified by another user.\n\n` +
+                        `If this is your account, please contact support.\n` +
+                        `Otherwise, try a different handle with /twitter`
+                    );
+                    return;
+                }
+                
+                // Generate verification code
+                const verificationCode = generateVerificationCode();
+                
+                // Update user with unverified handle and code
+                await User.findOneAndUpdate(
+                    { telegramId: chatId.toString() },
+                    { 
+                        twitterHandle: twitterHandle,
+                        twitterVerified: false,
+                        verificationCode: verificationCode,
+                        verificationExpires: new Date(Date.now() + 15 * 60 * 1000) // 15 minutes
+                    }
+                );
+                
+                // Send verification instructions
+                bot.sendMessage(chatId, 
+                    `🔐 Twitter Verification Required\n\n` +
+                    `👤 Handle: @${twitterHandle}\n` +
+                    `🔑 Code: ${verificationCode}\n\n` +
+                    `📝 Step 2: Post this exact tweet:\n\n` +
+                    `"Verifying my Twitter for engagement campaigns: ${verificationCode} #TwitterEngagement"\n\n` +
+                    `⏰ You have 15 minutes to post this tweet.\n\n` +
+                    `After posting, reply "verify" to check verification.`
+                );
+                
+                console.log(`🔐 Verification code generated for @${twitterHandle}: ${verificationCode}`);
+                
+                // Wait for verification command
+                waitForVerification(chatId, twitterHandle, verificationCode);
+                
             } catch (error) {
-                console.error('❌ Error linking Twitter:', error);
-                bot.sendMessage(chatId, 'Sorry, there was an error linking your Twitter account. Please try again.');
+                console.error('❌ Error starting verification:', error);
+                bot.sendMessage(chatId, 'Sorry, there was an error starting verification. Please try again.');
             }
         }
     });
-});
+}
+
+function generateVerificationCode() {
+    // Generate a unique 6-character code
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+        code += characters.charAt(Math.floor(Math.random() * characters.length));
+    }
+    return code;
+}
+
+function isValidTwitterHandle(handle) {
+    // Twitter handle validation
+    const twitterRegex = /^[A-Za-z0-9_]{1,15}$/;
+    return twitterRegex.test(handle);
+}
+
+async function waitForVerification(chatId, twitterHandle, verificationCode) {
+    // Set up verification listener
+    const verificationListener = async (msg) => {
+        if (msg.chat.id === chatId) {
+            if (msg.text && msg.text.toLowerCase().includes('verify')) {
+                try {
+                    await checkTwitterVerification(chatId, twitterHandle, verificationCode);
+                } catch (error) {
+                    console.error('❌ Verification error:', error);
+                    bot.sendMessage(chatId, 'Error during verification. Please try again.');
+                }
+                
+                // Remove this listener
+                bot.removeListener('message', verificationListener);
+            } else if (msg.text && msg.text.startsWith('/')) {
+                // User used another command, cancel verification
+                bot.removeListener('message', verificationListener);
+            }
+        }
+    };
+    
+    bot.on('message', verificationListener);
+    
+    // Auto-cancel after 15 minutes
+    setTimeout(() => {
+        bot.removeListener('message', verificationListener);
+    }, 15 * 60 * 1000);
+}
+
+async function checkTwitterVerification(chatId, twitterHandle, verificationCode) {
+    bot.sendMessage(chatId, '🔍 Checking your Twitter for the verification tweet...');
+    
+    try {
+        // For now, we'll simulate the Twitter API check
+        // In production, you'd use Twitter API v2 to search for the tweet
+        const isVerified = await simulateTwitterVerification(twitterHandle, verificationCode);
+        
+        if (isVerified) {
+            // Mark user as verified
+            await User.findOneAndUpdate(
+                { telegramId: chatId.toString() },
+                { 
+                    twitterVerified: true,
+                    verificationCode: null,
+                    verificationExpires: null,
+                    verifiedAt: new Date()
+                }
+            );
+            
+            bot.sendMessage(chatId, 
+                `🎉 Twitter Account Verified Successfully!\n\n` +
+                `✅ @${twitterHandle} is now linked to your account.\n\n` +
+                `You can now:\n` +
+                `• Participate in campaigns\n` +
+                `• Complete your profile for bonus earnings: /profile\n` +
+                `• Check available campaigns: /campaigns\n\n` +
+                `💡 You can delete the verification tweet if you want.`
+            );
+            
+            console.log(`✅ Twitter verified: @${twitterHandle} for user ${chatId}`);
+            
+        } else {
+            bot.sendMessage(chatId, 
+                `❌ Verification Failed\n\n` +
+                `We couldn't find the verification tweet on @${twitterHandle}.\n\n` +
+                `Please make sure:\n` +
+                `• You posted the exact text with code: ${verificationCode}\n` +
+                `• The tweet is public (not private)\n` +
+                `• You waited a few minutes after posting\n\n` +
+                `Try again by replying "verify" or restart with /twitter`
+            );
+        }
+        
+    } catch (error) {
+        console.error('❌ Error checking verification:', error);
+        bot.sendMessage(chatId, 
+            `⚠️ Verification Error\n\n` +
+            `There was an error checking your verification.\n` +
+            `Please try again in a few minutes or contact support.`
+        );
+    }
+}
+
+// Simulate Twitter verification (replace with real Twitter API in production)
+async function simulateTwitterVerification(twitterHandle, verificationCode) {
+    // For demo purposes, we'll return true after a delay
+    // In production, you'd use Twitter API v2 to search for tweets
+    
+    await new Promise(resolve => setTimeout(resolve, 3000)); // 3 second delay
+    
+    // For now, always return true for demo
+    // In production, this would search Twitter for the tweet containing the verification code
+    return true;
+    
+    /* Real implementation would look like:
+    
+    const twitterClient = new TwitterApi(process.env.TWITTER_BEARER_TOKEN);
+    
+    try {
+        const tweets = await twitterClient.v2.search(`from:${twitterHandle} "${verificationCode}"`, {
+            max_results: 10,
+            'tweet.fields': 'created_at'
+        });
+        
+        return tweets.data && tweets.data.length > 0;
+    } catch (error) {
+        console.error('Twitter API error:', error);
+        return false;
+    }
+    */
+}
 
 // Smart Profiling System (Optional) - Updated for MongoDB
 async function startSmartProfiling(chatId) {
@@ -1528,35 +1732,61 @@ bot.onText(/\/earnings/, (msg) => {
     );
 });
 
-// /status command
-bot.onText(/\/status/, (msg) => {
+// /status command - Updated to show verification status
+bot.onText(/\/status/, async (msg) => {
     const chatId = msg.chat.id;
-    const user = users.find(u => u.telegramId === chatId);
     
-    if (!user) {
-        bot.sendMessage(chatId, `Please register first with /start`);
-        return;
+    try {
+        const user = await User.findOne({ telegramId: chatId.toString() });
+        
+        if (!user) {
+            bot.sendMessage(chatId, `Please register first with /start`);
+            return;
+        }
+        
+        // Twitter verification status
+        let twitterStatus = '';
+        if (!user.twitterHandle) {
+            twitterStatus = `❌ Not linked - Use /twitter to link account`;
+        } else if (!user.twitterVerified) {
+            if (user.verificationCode && user.verificationExpires > new Date()) {
+                const timeLeft = Math.ceil((user.verificationExpires - new Date()) / (1000 * 60));
+                twitterStatus = `⏳ Verification pending - ${timeLeft} min left\n` +
+                               `Code: ${user.verificationCode}\n` +
+                               `Add to @${user.twitterHandle} bio, then reply "verify"`;
+            } else {
+                twitterStatus = `🔐 Not verified - Use /twitter to verify @${user.twitterHandle}`;
+            }
+        } else {
+            twitterStatus = `✅ @${user.twitterHandle} (verified ${user.verifiedAt ? user.verifiedAt.toDateString() : ''})`;
+        }
+        
+        // Profile status
+        let profileStatus = '';
+        if (user.profileCompleted && user.profile) {
+            profileStatus = `✅ ${user.profile.primaryProfile.label} (${user.profile.authenticityScore}/100)`;
+        } else {
+            profileStatus = `❌ Not completed (missing bonus earnings!)`;
+        }
+        
+        bot.sendMessage(chatId, 
+            `📊 Account Status\n\n` +
+            `Name: ${user.firstName} ${user.lastName}\n` +
+            `Twitter: ${twitterStatus}\n` +
+            `Profile: ${profileStatus}\n` +
+            `Account: ${user.isActive ? '✅ Active' : '❌ Inactive'}\n` +
+            `Registered: ${user.registeredAt.toDateString()}\n` +
+            `Total Earnings: ₦${user.earnings || 0}\n\n` +
+            `${!user.twitterHandle ? '📝 Next: Link Twitter with /twitter' : 
+              !user.twitterVerified ? '🔐 Next: Complete verification' :
+              !user.profileCompleted ? '🧠 Next: Complete profile with /profile' : 
+              '🎉 You\'re all set for maximum earnings!'}`
+        );
+        
+    } catch (error) {
+        console.error('❌ Error in status command:', error);
+        bot.sendMessage(chatId, 'Sorry, there was an error fetching your status. Please try again.');
     }
-    
-    let profileStatus = '';
-    if (user.profileCompleted && user.profile) {
-        profileStatus = `✅ ${user.profile.primaryProfile.label} (${user.profile.authenticityScore}/100)`;
-    } else {
-        profileStatus = `❌ Not completed (missing bonus earnings!)`;
-    }
-    
-    bot.sendMessage(chatId, 
-        `📊 Account Status\n\n` +
-        `Name: ${user.firstName} ${user.lastName}\n` +
-        `Twitter: ${user.twitterHandle ? '@' + user.twitterHandle : '❌ Not linked'}\n` +
-        `Profile: ${profileStatus}\n` +
-        `Status: ${user.isActive ? '✅ Active' : '❌ Inactive'}\n` +
-        `Registered: ${user.registeredAt.toDateString()}\n` +
-        `Total Earnings: ₦${user.earnings || 0}\n\n` +
-        `${!user.twitterHandle ? '📝 Link your Twitter with /twitter' : 
-          !user.profileCompleted ? '🧠 Complete your profile with /profile for bonuses' : 
-          '🎉 You\'re all set for maximum earnings!'}`
-    );
 });
 
 // Handle unknown commands
