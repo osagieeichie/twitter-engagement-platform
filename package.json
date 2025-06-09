@@ -20,6 +20,7 @@
     "mongodb": "^6.17.0",
     "mongoose": "^7.5.0",
     "node-telegram-bot-api": "^0.61.0",
+    "nodemailer": "^7.0.3",
     "paystack": "^2.0.1",
     "redis": "^4.6.7"
   },

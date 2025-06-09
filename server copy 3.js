@@ -2,16 +2,7 @@
 require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
-// REPLACE the imports section at the top of server.js with this:
-
-require('dotenv').config();
-const express = require('express');
-const mongoose = require('mongoose');
 const TelegramBot = require('node-telegram-bot-api');
-const TwitterService = require('./twitter-service'); // NEW LINE - Add this
-
-// Import database models
-const { User, Campaign, Assignment, Cooldown, ProfilingState, Analytics } = require('./models');
 
 // Import database models
 const { User, Campaign, Assignment, Cooldown, ProfilingState, Analytics } = require('./models');
@@ -725,8 +716,6 @@ function formatNumber(num) {
 // Telegram Bot Commands
 
 // /start command - Register new user
-// REPLACE the /start command with this:
-
 bot.onText(/\/start/, async (msg) => {
     const chatId = msg.chat.id;
     const user = msg.from;
@@ -958,134 +947,7 @@ async function waitForCleanBioVerification(chatId, twitterHandle, verificationCo
     }, 30 * 60 * 1000);
 }
 
-// REPLACE the checkCleanBioVerification function with this:
-
 async function checkCleanBioVerification(chatId, twitterHandle, verificationCode) {
-    try {
-        bot.sendMessage(chatId, '🔍 Checking your Twitter bio for the verification code...');
-        
-        console.log(`🔍 Starting verification for ${twitterHandle} with code ${verificationCode}`);
-        
-        // Check if verification is still valid
-        const user = await User.findOne({ 
-            telegramId: chatId.toString(),
-            verificationCode: verificationCode
-        });
-        
-        if (!user) {
-            console.log('❌ No user found with verification code');
-            bot.sendMessage(chatId, 
-                `❌ Verification session not found.\n\n` +
-                `Please start over with /twitter`
-            );
-            return;
-        }
-        
-        if (new Date() > user.verificationExpires) {
-            console.log('❌ Verification expired');
-            bot.sendMessage(chatId, 
-                `⏰ Verification Expired\n\n` +
-                `Your verification session has expired.\n` +
-                `Please start over with /twitter`
-            );
-            return;
-        }
-        
-        console.log('✅ Verification is valid, checking bio...');
-        
-        // Use TwitterService for real verification
-        const twitterService = new TwitterService();
-        let verificationResult;
-        
-        try {
-            verificationResult = await twitterService.verifyBioCode(twitterHandle, verificationCode);
-        } catch (error) {
-            console.log('❌ Twitter API error, falling back to simulation');
-            // Fallback to simulation if API fails
-            verificationResult = { verified: true, profile: null };
-        }
-        
-        console.log(`📋 Bio verification result:`, verificationResult.verified);
-        
-        if (verificationResult.verified) {
-            console.log('✅ Verification successful, updating user...');
-            
-            // Calculate user metrics if profile available
-            let twitterMetrics = {};
-            if (verificationResult.profile) {
-                const userValue = twitterService.calculateUserValue(verificationResult.profile);
-                const avgEngagement = await twitterService.calculateAverageEngagement(twitterHandle);
-                
-                twitterMetrics = {
-                    followers: verificationResult.profile.public_metrics.followers_count,
-                    following: verificationResult.profile.public_metrics.following_count,
-                    tweets: verificationResult.profile.public_metrics.tweet_count,
-                    verified: verificationResult.profile.verified,
-                    averageEngagement: avgEngagement,
-                    userValue: userValue
-                };
-            }
-            
-            // Mark user as verified
-            const updatedUser = await User.findOneAndUpdate(
-                { telegramId: chatId.toString() },
-                { 
-                    twitterVerified: true,
-                    verificationCode: null,
-                    verificationExpires: null,
-                    verifiedAt: new Date(),
-                    twitterMetrics: twitterMetrics
-                },
-                { new: true }
-            );
-            
-            console.log('✅ User updated successfully:', !!updatedUser);
-            
-            let message = `🎉 Twitter Account Verified Successfully!\n\n` +
-                         `✅ @${twitterHandle} is now linked to your account.\n`;
-            
-            if (twitterMetrics.followers) {
-                message += `👥 Followers: ${twitterMetrics.followers.toLocaleString()}\n`;
-                message += `📊 Engagement Score: ${twitterMetrics.userValue}/100\n`;
-                if (twitterMetrics.verified) {
-                    message += `✅ Verified Account\n`;
-                }
-            }
-            
-            message += `\nYou can now:\n` +
-                      `• Complete your profile for bonus earnings: /profile\n` +
-                      `• Check available campaigns: /campaigns\n\n` +
-                      `💡 You can remove "${verificationCode}" from your bio now.`;
-            
-            bot.sendMessage(chatId, message);
-            
-            console.log(`✅ Twitter verified: @${twitterHandle} for user ${chatId}`);
-            
-        } else {
-            console.log('❌ Bio verification failed');
-            bot.sendMessage(chatId, 
-                `❌ Verification Failed\n\n` +
-                `We couldn't find the code "${verificationCode}" in @${twitterHandle}'s bio.\n\n` +
-                `Please make sure:\n` +
-                `• You added the exact code: ${verificationCode}\n` +
-                `• Your Twitter profile is public (not private)\n` +
-                `• You saved the bio changes\n` +
-                `• You waited a few minutes after updating\n\n` +
-                `Try again by replying "verify" or restart with /twitter`
-            );
-        }
-        
-    } catch (error) {
-        console.error('❌ Error in checkCleanBioVerification:', error);
-        console.error('❌ Error stack:', error.stack);
-        
-        bot.sendMessage(chatId, 
-            `⚠️ Verification Error\n\n` +
-            `There was a technical error: ${error.message}\n\n` +
-            `Please try again with /twitter or contact support.`
-        );
-    }
-} {
     try {
         bot.sendMessage(chatId, '🔍 Checking your Twitter bio for the verification code...');
         
@@ -1851,245 +1713,194 @@ function generateCompletionMessage(persona) {
 }
 
 // /profile command - View or complete profile
-// REPLACE the /profile command with this:
-console.log('🔍 /profile command called by user:', chatId);
-bot.onText(/\/profile/, async (msg) => {
+bot.onText(/\/profile/, (msg) => {
     const chatId = msg.chat.id;
+    const user = users.find(u => u.telegramId === chatId);
     
-    try {
-        const user = await User.findOne({ telegramId: chatId.toString() });
-        
-        if (!user) {
-            bot.sendMessage(chatId, `Please register first with /start`);
-            return;
-        }
-        
-        if (!user.twitterHandle || !user.twitterVerified) {
-            bot.sendMessage(chatId, 
-                `🐦 Please verify your Twitter account first!\n\n` +
-                `Use /twitter to link and verify your account.`
-            );
-            return;
-        }
-        
-        if (!user.profileCompleted) {
-            bot.sendMessage(chatId, 
-                `🧠 Complete Your Profile for Bonus Earnings!\n\n` +
-                `📈 Benefits:\n` +
-                `• 15% base bonus on all campaigns\n` +
-                `• Up to 25% bonus for perfect matches\n` +
-                `• Priority for campaigns in your interests\n` +
-                `• Better role assignments\n\n` +
-                `⏱️ Takes just 2 minutes!\n\n` +
-                `Reply "start" to begin the profile questionnaire.`
-            );
-            
-            // Wait for confirmation
-            const listener = (response) => {
-                if (response.chat.id === chatId && 
-                    response.text && response.text.toLowerCase().includes('start')) {
-                    
-                    bot.removeListener('message', listener);
-                    startSmartProfiling(chatId);
-                }
-            };
-            
-            bot.on('message', listener);
-            
-            // Remove listener after 2 minutes
-            setTimeout(() => {
-                bot.removeListener('message', listener);
-            }, 120000);
-            
-            return;
-        }
-        
-        // Show completed profile
-        const profile = user.profile;
-        const message = 
-            `👤 Your Profile Summary\n\n` +
-            `🎯 Profile Type: ${profile.primaryProfile.label}\n` +
-            `📝 Description: ${profile.primaryProfile.description}\n\n` +
-            `💰 Spending Power: ${profile.spendingPower.replace('_', ' ').toUpperCase()}\n` +
-            `🎭 Authenticity Score: ${profile.authenticityScore}/100\n` +
-            `⭐ Marketing Value: ${profile.marketingValue.toUpperCase()}\n\n` +
-            `✨ Best Campaign Types:\n` +
-            profile.recommendedCampaignTypes.map(type => `• ${type}`).join('\n') + '\n\n' +
-            `💰 Earnings Bonus: ${profile.authenticityScore > 80 ? '15-25%' : '15%'}\n\n` +
-            `🔄 Want to retake the questionnaire? Reply "retake"`;
-        
-        await bot.sendMessage(chatId, message);
-        
-        // Allow profile retaking
-        const retakeListener = (response) => {
-            if (response.chat.id === chatId && 
-                response.text && response.text.toLowerCase().includes('retake')) {
-                
-                bot.removeListener('message', retakeListener);
-                bot.sendMessage(chatId, `🔄 Retaking profile questionnaire...`);
-                
-                setTimeout(() => {
-                    startSmartProfiling(chatId);
-                }, 1000);
-            }
-        };
-        
-        bot.on('message', retakeListener);
-        
-        // Remove listener after 2 minutes
-        setTimeout(() => {
-            bot.removeListener('message', retakeListener);
-        }, 120000);
-        
-    } catch (error) {
-        console.error('❌ Error in /profile command:', error);
-        bot.sendMessage(chatId, 'Sorry, there was an error loading your profile. Please try again.');
+    if (!user) {
+        bot.sendMessage(chatId, `Please register first with /start`);
+        return;
     }
+    
+    if (!user.twitterHandle) {
+        bot.sendMessage(chatId, 
+            `🐦 Please link your Twitter account first!\n\n` +
+            `Use /twitter to link your account.`
+        );
+        return;
+    }
+    
+    if (!user.profileCompleted) {
+        bot.sendMessage(chatId, 
+            `🧠 Complete Your Profile for Bonus Earnings!\n\n` +
+            `📈 Benefits:\n` +
+            `• 15% base bonus on all campaigns\n` +
+            `• Up to 25% bonus for perfect matches\n` +
+            `• Priority for campaigns in your interests\n` +
+            `• Better role assignments\n\n` +
+            `⏱️ Takes just 2 minutes!\n\n` +
+            `Reply "start" to begin the profile questionnaire.`
+        );
+        
+        // Wait for confirmation
+        bot.once('message', (response) => {
+            if (response.chat.id === chatId && 
+                response.text.toLowerCase().includes('start')) {
+                
+                startSmartProfiling(chatId);
+            }
+        });
+        
+        return;
+    }
+    
+    // Show completed profile
+    const profile = user.profile;
+    const message = 
+        `👤 Your Profile Summary\n\n` +
+        `🎯 Profile Type: ${profile.primaryProfile.label}\n` +
+        `📝 Description: ${profile.primaryProfile.description}\n\n` +
+        `💰 Spending Power: ${profile.spendingPower.replace('_', ' ').toUpperCase()}\n` +
+        `🎭 Authenticity Score: ${profile.authenticityScore}/100\n` +
+        `⭐ Marketing Value: ${profile.marketingValue.toUpperCase()}\n\n` +
+        `✨ Best Campaign Types:\n` +
+        profile.recommendedCampaignTypes.map(type => `• ${type}`).join('\n') + '\n\n' +
+        `💰 Earnings Bonus: ${profile.authenticityScore > 80 ? '15-25%' : '15%'}\n\n` +
+        `🔄 Want to retake the questionnaire? Reply "retake"`;
+    
+    bot.sendMessage(chatId, message);
+    
+    // Allow profile retaking
+    bot.once('message', (response) => {
+        if (response.chat.id === chatId && 
+            response.text.toLowerCase().includes('retake')) {
+            
+            bot.sendMessage(chatId, `🔄 Retaking profile questionnaire...`);
+            
+            setTimeout(() => {
+                startSmartProfiling(chatId);
+            }, 1000);
+        }
+    });
 });
 
 // /campaigns command - Show campaigns to everyone
-// REPLACE the /campaigns command with this:
-
-bot.onText(/\/campaigns/, async (msg) => {
+bot.onText(/\/campaigns/, (msg) => {
     const chatId = msg.chat.id;
+    const user = users.find(u => u.telegramId === chatId);
     
-    try {
-        const user = await User.findOne({ telegramId: chatId.toString() });
+    if (!user) {
+        bot.sendMessage(chatId, `Please register first with /start`);
+        return;
+    }
+    
+    if (!user.twitterHandle) {
+        bot.sendMessage(chatId, 
+            `🐦 Please link your Twitter account first!\n\n` +
+            `Use /twitter to link your account and start earning!`
+        );
+        return;
+    }
+    
+    const availableCampaigns = campaigns.filter(c => c.status === 'pending' || c.status === 'active');
+    
+    if (availableCampaigns.length === 0) {
+        let message = `📋 No Active Campaigns\n\n` +
+                     `There are no campaigns available right now.\n` +
+                     `New campaigns are posted regularly!\n\n`;
         
-        if (!user) {
-            bot.sendMessage(chatId, `Please register first with /start`);
-            return;
-        }
-        
-        if (!user.twitterHandle || !user.twitterVerified) {
-            bot.sendMessage(chatId, 
-                `🐦 Please verify your Twitter account first!\n\n` +
-                `Use /twitter to link and verify your account.`
-            );
-            return;
-        }
-        
-        const availableCampaigns = await Campaign.find({ 
-            status: { $in: ['pending', 'active'] } 
-        }).sort({ createdAt: -1 });
-        
-        if (availableCampaigns.length === 0) {
-            let message = `📋 No Active Campaigns\n\n` +
-                         `There are no campaigns available right now.\n` +
-                         `New campaigns are posted regularly!\n\n`;
-            
-            if (user.profileCompleted) {
-                message += `💡 Your profile: ${user.profile.primaryProfile.label}\n` +
-                          `You'll get priority for: ${user.profile.recommendedCampaignTypes.slice(0, 2).join(', ')}`;
-            } else {
-                message += `💡 Complete your profile with /profile for bonus earnings!`;
-            }
-            
-            await bot.sendMessage(chatId, message);
+        if (user.profileCompleted) {
+            message += `💡 Your profile: ${user.profile.primaryProfile.label}\n` +
+                      `You'll get priority for: ${user.profile.recommendedCampaignTypes.slice(0, 2).join(', ')}`;
         } else {
-            let message = `🚀 Available Campaigns:\n\n`;
-            
-            for (let i = 0; i < Math.min(availableCampaigns.length, 5); i++) {
-                const campaign = availableCampaigns[i];
-                const baseEarning = Math.round(campaign.budget * 0.65 / campaign.estimatedParticipants);
-                
-                message += `${i + 1}. ${campaign.brandName}\n`;
-                message += `💰 Base Earning: ₦${baseEarning.toLocaleString()}\n`;
-                
-                // Show potential bonuses
-                if (user.profileCompleted) {
-                    const profileBonus = Math.round(baseEarning * 0.15);
-                    const isMatch = isUserMatchForCampaign(user, campaign);
-                    
-                    if (isMatch && user.profile.authenticityScore > 80) {
-                        const totalBonus = Math.round(baseEarning * 0.25);
-                        message += `🎯 Your Potential: ₦${(baseEarning + totalBonus).toLocaleString()} (Perfect Match!)\n`;
-                    } else {
-                        message += `💡 Your Potential: ₦${(baseEarning + profileBonus).toLocaleString()} (Profile Bonus)\n`;
-                    }
-                } else {
-                    const profileBonus = Math.round(baseEarning * 0.15);
-                    message += `💡 With Profile: ₦${(baseEarning + profileBonus).toLocaleString()} (Complete /profile)\n`;
-                }
-                
-                message += `⏱️ Duration: ${campaign.duration} hours\n`;
-                message += `👥 Spots: ${campaign.participants ? campaign.participants.length : 0}/${campaign.estimatedParticipants}\n`;
-                message += `📊 Package: ${campaign.package}\n\n`;
-            }
-            
-            message += `🎯 Everyone gets selected based on fairness and availability!\n`;
-            if (!user.profileCompleted) {
-                message += `💡 Complete your profile for bonus earnings: /profile`;
-            } else {
-                message += `✅ Profile complete - you're ready for bonus earnings!`;
-            }
-            
-            await bot.sendMessage(chatId, message);
+            message += `💡 Complete your profile with /twitter for bonus earnings!`;
         }
         
-    } catch (error) {
-        console.error('❌ Error in /campaigns command:', error);
-        bot.sendMessage(chatId, 'Sorry, there was an error loading campaigns. Please try again.');
+        bot.sendMessage(chatId, message);
+    } else {
+        let message = `🚀 Available Campaigns:\n\n`;
+        
+        availableCampaigns.forEach((campaign, index) => {
+            const baseEarning = Math.round(campaign.budget * 0.65 / campaign.estimatedParticipants);
+            
+            message += `${index + 1}. ${campaign.brandName}\n`;
+            message += `💰 Base Earning: ₦${baseEarning.toLocaleString()}\n`;
+            
+            // Show potential bonuses
+            if (user.profileCompleted) {
+                const profileBonus = Math.round(baseEarning * 0.15);
+                const isMatch = isUserMatchForCampaign(user, campaign);
+                
+                if (isMatch && user.profile.authenticityScore > 80) {
+                    const totalBonus = Math.round(baseEarning * 0.25);
+                    message += `🎯 Your Potential: ₦${(baseEarning + totalBonus).toLocaleString()} (Perfect Match!)\n`;
+                } else {
+                    message += `💡 Your Potential: ₦${(baseEarning + profileBonus).toLocaleString()} (Profile Bonus)\n`;
+                }
+            } else {
+                const profileBonus = Math.round(baseEarning * 0.15);
+                message += `💡 With Profile: ₦${(baseEarning + profileBonus).toLocaleString()} (Complete /twitter)\n`;
+            }
+            
+            message += `⏱️ Duration: ${campaign.duration} hours\n`;
+            message += `👥 Spots: ${campaign.participants.length}/${campaign.estimatedParticipants}\n`;
+            message += `📊 Package: ${campaign.package}\n\n`;
+        });
+        
+        message += `🎯 Everyone gets selected based on fairness and availability!\n`;
+        if (!user.profileCompleted) {
+            message += `💡 Complete your profile for bonus earnings: /twitter`;
+        } else {
+            message += `✅ Profile complete - you're ready for bonus earnings!`;
+        }
+        
+        bot.sendMessage(chatId, message);
     }
 });
 
 // /assignments command - Check your current assignments
-// REPLACE the /assignments command with this:
-
-bot.onText(/\/assignments/, async (msg) => {
+bot.onText(/\/assignments/, (msg) => {
     const chatId = msg.chat.id;
+    const user = users.find(u => u.telegramId === chatId);
     
-    try {
-        const user = await User.findOne({ telegramId: chatId.toString() });
-        
-        if (!user) {
-            bot.sendMessage(chatId, `Please register first with /start`);
-            return;
-        }
-        
-        // Find assignments for this user
-        const userAssignments = await Assignment.find({ 
-            userId: chatId.toString() 
-        }).populate('campaignId');
-        
-        if (userAssignments.length === 0) {
-            let message = `📋 No Current Assignments\n\n` +
-                         `You don't have any active assignments right now.\n` +
-                         `Make sure your Twitter account is verified!\n\n`;
-            
-            if (!user.profileCompleted) {
-                message += `💡 Complete your profile for bonus earnings: /profile`;
-            } else {
-                message += `✅ Profile complete - you're ready for campaigns!`;
-            }
-            
-            await bot.sendMessage(chatId, message);
-            return;
-        }
-        
-        let message = `📋 Your Active Assignments:\n\n`;
-        
-        userAssignments.forEach((assignment, index) => {
-            const campaign = assignment.campaignId;
-            if (campaign) {
-                const timeUntil = getTimeUntilScheduled(assignment.scheduledTime);
-                
-                message += `${index + 1}. ${campaign.brandName}\n`;
-                message += `Role: ${assignment.role.toUpperCase()}\n`;
-                message += `💰 Earning: ₦${assignment.estimatedEarning.toLocaleString()}\n`;
-                message += `⏰ ${timeUntil}\n`;
-                message += `Status: ${assignment.status === 'pending' ? '⏳ Scheduled' : assignment.status}\n\n`;
-            }
-        });
-        
-        message += `💡 We'll notify you when it's time for each assignment!`;
-        
-        await bot.sendMessage(chatId, message);
-        
-    } catch (error) {
-        console.error('❌ Error in /assignments command:', error);
-        bot.sendMessage(chatId, 'Sorry, there was an error loading your assignments. Please try again.');
+    if (!user) {
+        bot.sendMessage(chatId, `Please register first with /start`);
+        return;
     }
+    
+    const userAssignments = assignments.filter(a => a.userId === chatId);
+    
+    if (userAssignments.length === 0) {
+        let message = `📋 No Current Assignments\n\n` +
+                     `You don't have any active assignments right now.\n` +
+                     `Make sure your Twitter account is linked with /twitter!\n\n`;
+        
+        if (!user.profileCompleted) {
+            message += `💡 Complete your profile for bonus earnings: /profile`;
+        } else {
+            message += `✅ Profile complete - you're ready for campaigns!`;
+        }
+        
+        bot.sendMessage(chatId, message);
+        return;
+    }
+    
+    let message = `📋 Your Active Assignments:\n\n`;
+    
+    userAssignments.forEach((assignment, index) => {
+        const campaign = getCampaignById(assignment.campaignId);
+        const timeUntil = getTimeUntilScheduled(assignment.scheduledTime);
+        
+        message += `${index + 1}. ${campaign.brandName}\n`;
+        message += `Role: ${assignment.role.toUpperCase()}\n`;
+        message += `💰 Earning: ₦${assignment.estimatedEarning.toLocaleString()}\n`;
+        message += `⏰ ${timeUntil}\n`;
+        message += `Status: ${assignment.status === 'pending' ? '⏳ Scheduled' : assignment.status}\n\n`;
+    });
+    
+    message += `💡 We'll remind you 15 minutes before each assignment!`;
+    
+    bot.sendMessage(chatId, message);
 });
 
 function getTimeUntilScheduled(scheduledTime) {
@@ -2111,44 +1922,34 @@ function getTimeUntilScheduled(scheduledTime) {
 }
 
 // /earnings command
-// REPLACE the /earnings command with this:
-
-bot.onText(/\/earnings/, async (msg) => {
+bot.onText(/\/earnings/, (msg) => {
     const chatId = msg.chat.id;
+    const user = users.find(u => u.telegramId === chatId);
     
-    try {
-        const user = await User.findOne({ telegramId: chatId.toString() });
-        
-        if (!user) {
-            bot.sendMessage(chatId, `Please register first with /start`);
-            return;
-        }
-        
-        // Calculate potential bonus
-        let bonusInfo = '';
-        if (user.profileCompleted && user.profile) {
-            const bonusPercent = user.profile.authenticityScore > 80 ? '15-25%' : '15%';
-            bonusInfo = `\n🎯 Profile Bonus: ${bonusPercent} extra on all campaigns!`;
-        } else {
-            bonusInfo = `\n💡 Complete /profile for 15-25% bonus earnings!`;
-        }
-        
-        await bot.sendMessage(chatId, 
-            `💰 Your Earnings Summary\n\n` +
-            `Total Earned: ₦${user.earnings || 0}\n` +
-            `Campaigns Completed: ${user.campaignsCompleted || 0}\n` +
-            `Account Status: ${user.isActive ? '✅ Active' : '❌ Inactive'}${bonusInfo}\n\n` +
-            `💡 Keep participating to earn more!`
-        );
-        
-    } catch (error) {
-        console.error('❌ Error in /earnings command:', error);
-        bot.sendMessage(chatId, 'Sorry, there was an error loading your earnings. Please try again.');
+    if (!user) {
+        bot.sendMessage(chatId, `Please register first with /start`);
+        return;
     }
+    
+    // Calculate potential bonus
+    let bonusInfo = '';
+    if (user.profileCompleted && user.profile) {
+        const bonusPercent = user.profile.authenticityScore > 80 ? '15-25%' : '15%';
+        bonusInfo = `\n🎯 Profile Bonus: ${bonusPercent} extra on all campaigns!`;
+    } else {
+        bonusInfo = `\n💡 Complete /profile for 15-25% bonus earnings!`;
+    }
+    
+    bot.sendMessage(chatId, 
+        `💰 Your Earnings Summary\n\n` +
+        `Total Earned: ₦${user.earnings || 0}\n` +
+        `Campaigns Completed: ${user.campaigns || 0}\n` +
+        `Account Status: ${user.isActive ? '✅ Active' : '❌ Inactive'}${bonusInfo}\n\n` +
+        `💡 Keep participating to earn more!`
+    );
 });
-// /status command - Updated to show verification status
-// REPLACE the /status command with this:
 
+// /status command - Updated to show verification status
 bot.onText(/\/status/, async (msg) => {
     const chatId = msg.chat.id;
     
@@ -2185,7 +1986,7 @@ bot.onText(/\/status/, async (msg) => {
             profileStatus = `❌ Not completed (missing bonus earnings!)`;
         }
         
-        await bot.sendMessage(chatId, 
+        bot.sendMessage(chatId, 
             `📊 Account Status\n\n` +
             `Name: ${user.firstName} ${user.lastName}\n` +
             `Twitter: ${twitterStatus}\n` +
